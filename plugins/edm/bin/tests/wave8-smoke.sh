@@ -2569,13 +2569,31 @@ t12_marker_lifecycle_tests() {
   # ---- AC5: SessionStart reconciliation, both directions ---------------------------------------
   # (a) a marker naming an initiative that is NOT at current_phase == 6 (T12MKB, still at phase 1
   # since it never itself called phase-start 6) is removed with exactly one line of output.
+  #
+  # EDMDS-T20 amended this ONE assertion, and only this one (D64: a change that falsifies a
+  # shipped assertion repairs it in the same commit). It used to read "no marker file exists
+  # afterwards", which was true only because the stale-removal and the recreation were mutually
+  # exclusive branches of one conditional: removing T12MKB's marker made the recreation
+  # unreachable even though T12MKA is genuinely at current_phase == 6 right here (phase-complete
+  # records completion metadata but never decrements current_phase). That absence was the CA-075
+  # defect, observed and asserted as if it were the contract.
+  #
+  # The repair is the minimum that restores the assertion's own stated meaning: the stale marker
+  # for T12MKB is gone, tested by CONTENT rather than by file absence. It still fails if the
+  # removal never happens. EDMDS-T20's own positive/control coverage for the reconciliation lives
+  # in wave6-smoke.sh, not here -- this file is not that ticket's Target Component and is touched
+  # only to the extent D64 forces.
   printf '%s\t%s\t%s\n' "T12MKB" "$T12MKB_DIR" "2026-01-01T00:00:00Z" > "$T12_MARKER"
   T12_SS_OUT="$("$EDM_STATE" session-start 2>&1)"
   check "EDMV4-T12 AC5 -- SessionStart output names the removed prefix" "T12MKB" "$T12_SS_OUT"
+  T12_SS_AFTER_PREFIX=""
   if [[ -f "$T12_MARKER" ]]; then
+    IFS=$'\t' read -r T12_SS_AFTER_PREFIX _T12_SS_AD _T12_SS_AT < "$T12_MARKER"
+  fi
+  if [[ "$T12_SS_AFTER_PREFIX" == "T12MKB" ]]; then
     fail "EDMV4-T12 AC5 -- stale marker for T12MKB was NOT removed by session-start"
   else
-    pass "EDMV4-T12 AC5 -- stale marker for T12MKB removed by session-start"
+    pass "EDMV4-T12 AC5 -- stale marker for T12MKB removed by session-start (marker now names '${T12_SS_AFTER_PREFIX:-<none>}')"
   fi
   T12_SS_REMOVAL_LINES="$(printf '%s\n' "$T12_SS_OUT" | grep -c 'removed stale Phase-6 marker' || true)"
   check_num "EDMV4-T12 AC5 -- exactly one removal line printed" "1" "$T12_SS_REMOVAL_LINES"

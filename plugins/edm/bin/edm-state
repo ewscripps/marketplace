@@ -78,9 +78,11 @@ source "${SCRIPT_DIR}/_edm-lint-lib.sh"
 # The marker is a derived cache of "is some initiative in this project currently in Phase 6",
 # consulted by edm-gateguard (EDMV4-T11) so GateGuard's common case costs one process exec and
 # one `test -f`, never an edm-state invocation. It is never a second source of truth: every write
-# and removal below is best-effort, and cmd_session_start's reconciliation (further down this
-# file) reconciles it against .edm-state.json in both directions, never the reverse. Both
-# functions degrade to a silent no-op when _edm-datadir-lib.sh did not load, matching "an
+# and removal below is best-effort, and _edm_marker_reconcile -- the third function in this block,
+# which cmd_session_start calls once per SessionStart -- reconciles it against .edm-state.json in
+# both directions, never the reverse. EDMDS-T20 moved that reconciliation here from inside
+# cmd_session_start, so all three marker functions now sit together; do not re-inline it.
+# All three degrade to a silent no-op when _edm-datadir-lib.sh did not load, matching "an
 # unresolvable data directory degrades to today's behaviour (no gate at all), never to a deny"
 # (Description).
 
@@ -144,6 +146,77 @@ _edm_marker_remove_if_matches() {
   IFS=$'\t' read -r marker_prefix _marker_rest < "$marker" 2>/dev/null || return 0
   [[ "$marker_prefix" == "$prefix" ]] || return 0
   rm -f "$marker" 2>/dev/null
+  return 0
+}
+
+# _edm_marker_reconcile <phase6-prefix-membership> <first-phase6-prefix> <first-phase6-dir>
+#   The whole Phase-6 marker reconciliation for one SessionStart pass, lifted out of
+#   cmd_session_start so it is one named unit rather than an inline conditional (EDMDS-T20).
+#
+#   <phase6-prefix-membership> is the space-joined membership string cmd_session_start already
+#   accumulates during its scan; the other two arguments name the FIRST initiative it found at
+#   current_phase == 6, and are empty when it found none.
+#
+#   EDMDS-T20 AC1 -- stale-removal and recreation are INDEPENDENT evaluations. They used to be
+#   the two arms of one `if`/`elif`, so they were mutually exclusive by construction, and the
+#   case that matters most could not be handled at all: a marker naming an initiative that has
+#   LEFT Phase 6 while a DIFFERENT initiative is genuinely IN Phase 6 took the removal arm, and
+#   the recreation arm was then unreachable. The pass ended with no marker, and a marker-absent
+#   project is precisely what makes edm-gateguard allow every Edit and Write with no further
+#   checks -- a security control switching itself off, silently, on the one input that most
+#   needed it (CA-075). Reconciliation is one pass over both facts, never a choice between them.
+#
+#   EDMDS-T20 AC4 -- the read-check-delete sequence lives in THIS one function rather than inline
+#   in cmd_session_start, which is the test seam. A test drives it directly against a marker it
+#   staged itself, so the interleaving is chosen rather than raced for; no EDM_TEST_*-gated delay
+#   is shipped on a hook path to buy that determinism. This file's CLI dispatch is guarded on
+#   BASH_SOURCE, so sourcing it to reach this function executes no subcommand.
+#
+#   Best-effort throughout, exactly like the two helpers above: a missing data-directory library
+#   or an unresolvable marker path is a silent no-op and never changes cmd_session_start's exit
+#   status. The one line of operator output is the stale-removal notice, unchanged.
+#
+#   For the project-scoped lock that will wrap this call (EDMDS-10 AC2): this function acquires
+#   no lock and reads no state file, so an acquisition around the whole call is safe. Keep it
+#   around the WHOLE call -- pushing acquisitions inside, one per step, reopens between step (1)
+#   and step (2) exactly the window CA-075 names.
+_edm_marker_reconcile() {
+  local _phase6_prefixes="$1" _first_prefix="$2" _first_dir="$3"
+  declare -f edm_marker_path >/dev/null 2>&1 || return 0
+  local _marker
+  _marker="$(edm_marker_path)"
+  [[ -n "$_marker" ]] || return 0
+
+  # (1) Stale removal -- read, check, delete. A marker whose first field is empty or unreadable
+  # counts as NOT a member, which is the pre-change behaviour and the fail-closed direction: a
+  # marker nobody can attribute is not evidence that a gate should stay armed on someone's
+  # behalf. The deletion is a plain unlink of what was just read, deliberately NOT a
+  # compare-and-delete: re-reading the file here would paper over the concurrent-writer
+  # interleaving that the project-scoped lock is the real fix for, and would leave that lock with
+  # no way left to be shown necessary.
+  if [[ -f "$_marker" ]]; then
+    local _marker_prefix _marker_rest _marker_valid=0
+    IFS=$'\t' read -r _marker_prefix _marker_rest < "$_marker" 2>/dev/null || _marker_prefix=""
+    if [[ -n "$_marker_prefix" ]]; then
+      case " ${_phase6_prefixes} " in
+        *" ${_marker_prefix} "*) _marker_valid=1 ;;
+      esac
+    fi
+    if [[ $_marker_valid -eq 0 ]]; then
+      rm -f "$_marker" 2>/dev/null
+      echo "edm-state session-start: [info] removed stale Phase-6 marker for ${_marker_prefix:-unknown} (not at current_phase == 6)"
+    fi
+  fi
+
+  # (2) Recreation -- evaluated on every invocation, never as the `else` of (1). The presence
+  # test is re-run HERE rather than reused from step (1), because step (1) may have just removed
+  # the file: that re-test is the whole of AC1's "both run on every invocation", and reusing the
+  # entry-time answer would restore the mutually-exclusive behaviour under a different spelling.
+  # A still-valid marker left in place by step (1) makes this test false, so a healthy session
+  # costs one extra `test -f` and writes nothing.
+  if [[ ! -f "$_marker" && -n "$_first_prefix" ]]; then
+    _edm_marker_write "$_first_prefix" "$_first_dir"
+  fi
   return 0
 }
 
@@ -4807,32 +4880,16 @@ cmd_session_start() {
     echo
   done < <(list_state_files)
 
-  # ---- Phase-6 marker SessionStart reconciliation (EDMV4-T12 AC5) ------------------------------
+  # ---- Phase-6 marker SessionStart reconciliation (EDMV4-T12 AC5; EDMDS-T20) -------------------
   # Best-effort, both directions, and only in this direction (the marker is a derived cache --
   # Description): a marker whose named initiative is not (or no longer, e.g. after a branch
   # switch or an unmatched PREFIX) at current_phase == 6 is removed with exactly one line of
-  # operator output; an absent marker is recreated when some initiative genuinely is at phase 6.
-  if declare -f edm_marker_path >/dev/null 2>&1; then
-    local _ss_marker
-    _ss_marker="$(edm_marker_path)"
-    if [[ -n "$_ss_marker" ]]; then
-      if [[ -f "$_ss_marker" ]]; then
-        local _ss_marker_prefix _ss_marker_rest _ss_marker_valid=0
-        IFS=$'\t' read -r _ss_marker_prefix _ss_marker_rest < "$_ss_marker" 2>/dev/null || _ss_marker_prefix=""
-        if [[ -n "$_ss_marker_prefix" ]]; then
-          case " ${_ss_phase6_prefixes} " in
-            *" ${_ss_marker_prefix} "*) _ss_marker_valid=1 ;;
-          esac
-        fi
-        if [[ $_ss_marker_valid -eq 0 ]]; then
-          rm -f "$_ss_marker" 2>/dev/null
-          echo "edm-state session-start: [info] removed stale Phase-6 marker for ${_ss_marker_prefix:-unknown} (not at current_phase == 6)"
-        fi
-      elif [[ -n "$_ss_phase6_first_prefix" ]]; then
-        _edm_marker_write "$_ss_phase6_first_prefix" "$_ss_phase6_first_dir"
-      fi
-    fi
-  fi
+  # operator output; and, in the SAME pass rather than instead of it, a then-absent marker is
+  # recreated when some initiative genuinely is at phase 6. The body lives in
+  # _edm_marker_reconcile (top of this file, beside the two helpers it calls) -- see that
+  # function for why the two halves must be independent evaluations and why it is a function at
+  # all rather than the conditional that used to sit here.
+  _edm_marker_reconcile "$_ss_phase6_prefixes" "$_ss_phase6_first_prefix" "$_ss_phase6_first_dir"
 }
 
 # ---- Findings ledger rendering (EDMV3-T26) ----------------------------------
