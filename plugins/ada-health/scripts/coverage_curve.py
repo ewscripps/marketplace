@@ -12,6 +12,11 @@ Read this by comparing columns, not rows:
 
 Uses only get_ada_metric, so it is cheap: 3 calls per day.
 
+This is the same computation the /ada-health skill runs inline at Step 0.5 to pick
+AR_OFFSET. The skill's inline sweep is the default because it needs no separate
+credential; use this script when you want a longer lookback than 8 days or a
+human-readable table to watch a backlog clear. Keep the two in agreement.
+
 Usage:
   ADA_TOKEN=... python3 coverage_curve.py \
       --url https://nuvyyo-gr.ada.support/api/mcp --channel email --days 10
@@ -63,7 +68,10 @@ def main():
     settled = []
     for back in range(a.days - 1, -1, -1):
         d = last - datetime.timedelta(days=back)
-        s, e = d.isoformat(), (d + datetime.timedelta(days=1)).isoformat()
+        # Ada's start_date/end_date are inclusive of BOTH endpoints, so one day
+        # is start == end. Using d+1 here spanned two days per row and blended
+        # each fresh day with the settled day after it, under-reporting the lag.
+        s = e = d.isoformat()
         eng = metric(a.url, token, "conversation_volume_engaged", s, e, base)
         if not eng:
             print(f"{s:<12}{0:>9}")

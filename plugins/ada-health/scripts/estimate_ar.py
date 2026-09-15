@@ -18,6 +18,9 @@ Usage:
   ADA_TOKEN=... ANTHROPIC_API_KEY=... python3 estimate_ar.py \
       --url https://nuvyyo-gr.ada.support/api/mcp \
       --start 2026-09-02 --end 2026-09-03 --channel email --sample 25
+
+--start/--end are inclusive of both endpoints, so the example above covers two
+days (Sep 2 and Sep 3). For a single day pass the same date to both.
 """
 import argparse, json, os, random, sys, urllib.request
 from math import sqrt
