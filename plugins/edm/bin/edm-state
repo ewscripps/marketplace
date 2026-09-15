@@ -5146,15 +5146,21 @@ _cmd_audit_round_complete_body() {
   # closed and counted as full. EDMV4-T23 moves the source of truth from lenses-run.txt (a
   # RENDERING) to the round record IN STATE (`lenses` / `lenses_na`, materialized by
   # EDMV4-T22 at round-start, before any lens agent launches -- so a lens cannot retroactively
-  # excuse its own non-delivery). The manifest keeps exactly one role: its existence is still the
-  # GATE TRIGGER (C-4: a round with no pass directory or no lenses-run.txt -- legacy rounds,
-  # srd/tickets types, test scratch states -- is left exactly as before). Its CONTENT is no longer
-  # read; the ^L[0-9]+$-filtered, CRLF/trailing-newline-defensive line parsing this loop used to do
+  # excuse its own non-delivery). The manifest's CONTENT is no longer read; the
+  # ^L[0-9]+$-filtered, CRLF/trailing-newline-defensive line parsing this loop used to do
   # is retired along with that read, since there is no longer any manifest content to parse
   # defensively against (EDMV4-T24 AC8's "Lenses N/A:" header line is safe to add to
   # lenses-run.txt for exactly this reason -- nothing here parses it as a lens ID any more).
-  # Three checks run, each with its own distinguishable warn prefix, and any one DOWNGRADES this
+  # EDMDS-T16 retired the manifest's remaining role too: its existence was the GATE TRIGGER, so
+  # a `code` round that produced no pass directory or no lenses-run.txt escaped all three checks
+  # below entirely. That case is now check (0) rather than a C-4 carve-out -- absence IS the
+  # finding (EDMDS-07, closing EDMV4's D40 residual gap). Only `srd` and `tickets` rounds, which
+  # never produce a pass directory, remain outside this whole block; they are excluded by the
+  # enclosing audit_type test, not by the manifest.
+  # FOUR checks run, each with its own distinguishable warn prefix, and any one DOWNGRADES this
   # round's recorded round_type to "partial" (a partial round is never convergent):
+  #   (0) an absent pass directory, or a pass directory with no lenses-run.txt, is non-delivery
+  #       -- prefixed CA-091, and the two sub-causes are named separately.
   #   (1) every lens in `lenses` (state) requires a non-empty, parseable lens-L{N}.jsonl -- the
   #       original CA-471 check, unchanged in substance, only its source moved.
   #   (2) every lens in `lenses_na` (state) must have NO lens-L{N}.jsonl on disk -- a JSONL
@@ -5198,7 +5204,30 @@ _cmd_audit_round_complete_body() {
       _pass_dir="${_pass_cands[0]}"
     fi
     _manifest="${_pass_dir}/lenses-run.txt"
-    if [[ -n "$_pass_dir" && -f "$_manifest" ]]; then
+    # ---- (0) CA-091 / EDMDS-07: non-delivery. A `code` round that produced no pass directory,
+    #      or a pass directory with no lenses-run.txt manifest, delivered nothing at all -- the
+    #      strongest non-delivery signal available. Until EDMDS-T16 this `if` had no `else`, so
+    #      that signal produced no consequence whatsoever: checks (1)-(3) below were gated on the
+    #      manifest's existence, and a round that never wrote one sailed past every one of them
+    #      and kept whatever round_type it was recorded with at round-start (EDMV4's D40 named
+    #      this residual gap, reserved the ID `CAMGAP` for it, and closed the ticket without
+    #      using it). The manifest's existence is therefore no longer the gate TRIGGER for a
+    #      `code` round -- its absence IS the finding. Two separately-named sub-causes, because
+    #      they need different operator responses: a round that wrote nothing at all versus a
+    #      round whose lens agents wrote into a directory but never rendered a manifest.
+    #      This is deliberately scoped to `code` (the enclosing branch): `srd`/`tickets` rounds
+    #      never produce a pass directory, and C-4 legacy `code` rounds recorded before any of
+    #      this existed are downgraded by design -- a round nobody can prove delivered is exactly
+    #      what EDMDS-07 decided must not read as convergent. The message prefix is `CA-091`
+    #      rather than `CA-471` precisely so this cause stays distinguishable in operator output
+    #      from checks (1)-(3), which all carry the `CA-471` prefix.
+    if [[ -z "$_pass_dir" ]]; then
+      echo "audit-round-complete: [warn] CA-091: round ${round_num} produced no pass directory (expected ${_init_dir}/code-audit/pass-${round_num}_<date>/) -- a code round that delivered no lens output at all is non-delivery; recording round_type=partial (non-convergent); this round cannot be re-completed, so creating the directory afterwards does not restore round_type=full" >&2
+      ca471_downgrade="partial"
+    elif [[ ! -f "$_manifest" ]]; then
+      echo "audit-round-complete: [warn] CA-091: round ${round_num} pass directory ${_pass_dir} carries no lenses-run.txt manifest -- a code round that rendered no manifest is non-delivery; recording round_type=partial (non-convergent); this round cannot be re-completed, so writing the manifest afterwards does not restore round_type=full" >&2
+      ca471_downgrade="partial"
+    else
       local _all_lens_json _state_lenses _state_lenses_na _recorded_round_type
       # shellcheck disable=SC2086 # deliberate word-splitting; bash 3.2 has no arrays-as-constants
       _all_lens_json="$(printf '%s\n' $ALL_LENS_IDS | jq -R . | jq -s .)"
