@@ -7437,6 +7437,316 @@ t17_stale="$(comm -13 "$T17_OBSERVED_FILE" "$T17_DECLARED_FILE")"
   && pass "EDMDS-T17 AC4 -- the census saw ${t17_rounds_seen} full-coverage code round(s) against ${t17_declared_count} declared downgrade(s), so it is reading delivered rounds too -- not an empty sweep" \
   || fail "EDMDS-T17 AC4 -- census saw only ${t17_rounds_seen} full-coverage code round(s) for ${t17_declared_count} declared downgrade(s) -- the derivation is broken, not the invariant"
 
+# =================================================================================
+# EDMDS-T20 (EDMDS-10 AC1, AC7): the Phase-6 marker reconciliation is ONE pass
+#
+# The defect. cmd_session_start's reconciliation was one conditional whose two arms -- remove a
+# stale marker, recreate an absent one -- were mutually exclusive. So the case that matters most
+# could not be handled at all: a marker naming an initiative that has LEFT Phase 6, while a
+# DIFFERENT initiative is genuinely IN Phase 6, took the removal arm and the recreation arm was
+# unreachable. The session ended with the project unmarked, and edm-gateguard's marker-absent
+# fast path allows every Edit and Write with no further checks -- a security control switching
+# itself off, silently, on its own most important input.
+#
+# Why the assertions below are about CONTENT and about the CONSEQUENCE, never about a file
+# existing. "A marker file is present" is satisfied by a marker naming the wrong initiative, and
+# "no marker file is present" was the defect being asserted as if it were the contract (the
+# wave8-smoke.sh EDMV4-T12 AC5 case this ticket amends in the same commit did exactly that). Each
+# case below reads the marker's PREFIX field and then drives the real edm-gateguard to observe
+# whether the gate is actually armed, because the gate is the thing the marker exists for.
+#
+# Three-way discrimination is deliberate (D103). t20_marker_state below never returns one answer
+# for two different facts: NONE (no marker at all -- the fail-open state), UNREADABLE (a marker
+# that exists but yields no PREFIX), or the PREFIX itself. A probe that collapsed "absent" into
+# "wrong" would let the control pass vacuously, which is the defect class this initiative has
+# filed against itself repeatedly.
+# =================================================================================
+echo
+echo "EDMDS-T20 -- Phase-6 marker reconciliation: removal and recreation are one pass"
+
+T20_SCRATCH="$(mktemp -d "${TMP}/t20.XXXXXX")"
+
+# Band-local branch invariance. run-all.sh already checks this once for the whole run, but a
+# whole-run check names no culprit: this band stands up initiatives through the real edm-init,
+# which checks out a branch in its cwd's repository, so it is the band most able to move the
+# caller's branch and the one that should say so itself.
+T20_BRANCH_BEFORE="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'NOTAREPO')"
+
+# t20_env <outvar_root> -- stand up an isolated project + data directory + SRD root holding two
+# initiatives: T20ACT, driven to Phase 6 through the real subcommands (so it is genuinely at
+# current_phase == 6), and T20LFT, left at phase 1. Prints nothing; sets <outvar_root> to a
+# directory holding proj/, data/ and SRD/.
+#
+# CLAUDE_PROJECT_DIR is set per-fixture so edm_project_key() keys on this scratch project rather
+# than on the repository this suite runs inside -- without it every fixture here would share one
+# marker path with every other band in this file.
+#
+# The `cd` into the scratch project is load-bearing, not tidiness: edm-init runs `git checkout -b
+# edm/<prefix>` in its own cwd's repository (bin/edm-init's branch block), which is a no-op only
+# OUTSIDE a git worktree. Standing the fixture up without leaving this suite's own checkout
+# created edm/t20act and edm/t20lft in the caller's repository and left HEAD on one of them --
+# caught by run-all.sh's "no suite moved the caller's branch" check. ${T20_SCRATCH} is under the
+# suite's mktemp root and is not a repository, so the branch block correctly does nothing there.
+# Every later subshell in this band cds the same way for the same reason.
+t20_env() {
+  local __t20_outvar="$1"
+  local root; root="$(mktemp -d "${T20_SCRATCH}/env.XXXXXX")"
+  mkdir -p "${root}/proj" "${root}/data" "${root}/SRD"
+  (
+    cd "${root}/proj" || exit 1
+    export CLAUDE_PROJECT_DIR="${root}/proj"
+    export CLAUDE_PLUGIN_DATA="${root}/data"
+    export EDM_SRD_ROOT="${root}/SRD"
+    edm-init T20ACT --mode mini-srd >/dev/null
+    "$EDM_STATE" approve-gate T20ACT 1 >/dev/null
+    "$EDM_STATE" approve-gate T20ACT 2 >/dev/null
+    "$EDM_STATE" phase-start T20ACT 6 >/dev/null
+    edm-init T20LFT >/dev/null
+  ) >/dev/null 2>&1
+  printf -v "$__t20_outvar" '%s' "$root"
+}
+
+# t20_marker_path <root> -- the marker path this fixture's project resolves to.
+t20_marker_path() {
+  local root="$1"
+  CLAUDE_PROJECT_DIR="${root}/proj" CLAUDE_PLUGIN_DATA="${root}/data" \
+    /bin/bash -c ". '${SCRIPT_DIR}/../_edm-datadir-lib.sh'; edm_marker_path" 2>/dev/null
+}
+
+# t20_marker_state <root> -- THREE distinct answers, never two facts sharing one:
+#   NONE        no marker file at all (the fail-open state edm-gateguard allows through)
+#   UNREADABLE  a marker file exists but its PREFIX field is empty
+#   <PREFIX>    the initiative the marker names
+t20_marker_state() {
+  local root="$1" marker pfx rest
+  marker="$(t20_marker_path "$root")"
+  [[ -n "$marker" && -f "$marker" ]] || { printf 'NONE'; return 0; }
+  IFS=$'\t' read -r pfx rest < "$marker" 2>/dev/null || pfx=""
+  [[ -n "$pfx" ]] && printf '%s' "$pfx" || printf 'UNREADABLE'
+}
+
+# t20_stage_stale <root> -- write a marker naming T20LFT, which is NOT at current_phase == 6.
+t20_stage_stale() {
+  local root="$1" marker dir
+  marker="$(t20_marker_path "$root")"
+  mkdir -p "$(dirname "$marker")"
+  dir="$(EDM_SRD_ROOT="${root}/SRD" "$EDM_STATE" resolve-dir T20LFT 2>/dev/null)"
+  printf 'T20LFT\t%s\t2026-01-01T00:00:00Z\n' "$dir" > "$marker"
+}
+
+# t20_session_start <root> <edm-state-binary> -- run one reconciliation pass; stdout into
+# T20_SS_OUT, exit status into T20_SS_RC.
+t20_session_start() {
+  local root="$1" bin="$2"
+  T20_SS_RC=0
+  T20_SS_OUT="$(cd "${root}/proj" && CLAUDE_PROJECT_DIR="${root}/proj" CLAUDE_PLUGIN_DATA="${root}/data" \
+    EDM_SRD_ROOT="${root}/SRD" bash "$bin" session-start 2>&1)" || T20_SS_RC=$?
+}
+
+# t20_gateguard_rc <root> -- drive the REAL edm-gateguard with a first-touch Edit against this
+# fixture and return its exit status: 2 = denied (the gate is armed and forcing facts), 0 =
+# allowed. This is the consequence the whole requirement is about, so it is measured rather than
+# inferred from the marker's presence.
+t20_gateguard_rc() {
+  local root="$1" rc=0
+  printf '{"tool_name":"Edit","tool_input":{"file_path":"src/t20.js"}}' \
+    | CLAUDE_PROJECT_DIR="${root}/proj" CLAUDE_PLUGIN_DATA="${root}/data" \
+      EDM_GATEGUARD_DENY_MODE=exit-code bash "${SCRIPT_DIR}/../edm-gateguard" >/dev/null 2>&1 || rc=$?
+  printf '%s' "$rc"
+}
+
+# ---- AC2: the stale-plus-active case, driven through the shipped binary ------------------------
+T20_POS_ROOT=""
+t20_env T20_POS_ROOT
+t20_stage_stale "$T20_POS_ROOT"
+t20_session_start "$T20_POS_ROOT" "$EDM_STATE"
+
+check_num "EDMDS-T20 AC2 -- session-start exits 0 on the stale-plus-active case" "0" "$T20_SS_RC"
+t20_pos_removal_lines="$(printf '%s\n' "$T20_SS_OUT" | grep -c 'removed stale Phase-6 marker' || true)"
+check_num "EDMDS-T20 AC2 -- the stale marker's removal is still reported exactly once" "1" "$t20_pos_removal_lines"
+
+t20_pos_state="$(t20_marker_state "$T20_POS_ROOT")"
+[[ "$t20_pos_state" == "T20ACT" ]] \
+  && pass "EDMDS-T20 AC2 -- the SAME pass removed the stale marker and re-established one naming the initiative genuinely at current_phase == 6 (${t20_pos_state})" \
+  || fail "EDMDS-T20 AC2 -- after reconciliation the marker state is '${t20_pos_state}', expected T20ACT (NONE means the project is unmarked while T20ACT is still in Phase 6)"
+
+t20_pos_gg="$(t20_gateguard_rc "$T20_POS_ROOT")"
+check_num "EDMDS-T20 AC2 -- edm-gateguard DENIES a first-touch Edit afterwards, so the Phase-6 gate is armed" "2" "$t20_pos_gg"
+
+# ---- AC3 control: the same fixture against the pre-fix mutually-exclusive branches -------------
+# D96 mutation-harness discipline. The source binary is copied FIRST and the copy is `cmp`-ed
+# against it before anything is built from it; a mismatch aborts the control rather than letting
+# it run against an unknown baseline. The mutant is built into a scratch bin directory FROM that
+# verified copy -- the shipped binary is never written to at any point, so there is no restore
+# step that could silently no-op. The source is `cmp`-ed against the copy again at the end, which
+# is what proves that claim rather than asserting it.
+T20_SRC_COPY="${T20_SCRATCH}/edm-state.pristine"
+cp "$EDM_STATE" "$T20_SRC_COPY"
+if cmp -s "$EDM_STATE" "$T20_SRC_COPY"; then
+  pass "EDMDS-T20 AC3 -- the pre-mutation copy of edm-state is byte-identical to the source (D96: the backup is verified before anything is built from it)"
+  t20_backup_ok=1
+else
+  fail "EDMDS-T20 AC3 -- the pre-mutation copy of edm-state does NOT match the source; the control below would run against an unknown baseline and is skipped"
+  t20_backup_ok=0
+fi
+
+if [[ "$t20_backup_ok" -eq 1 ]]; then
+  # The mutation restores the pre-fix control flow with one inserted statement: returning from
+  # _edm_marker_reconcile immediately after the stale-removal notice makes the recreation
+  # unreachable once a removal has happened, which is exactly what the old `if`/`elif` did. The
+  # anchor is the notice's own text inside the function body; a mutation that matched nothing
+  # would leave the control asserting the fixed behaviour and passing for the wrong reason, so
+  # the applied-line count is asserted below before the mutant is ever run.
+  T20_MUT_BIN_DIR="${T20_SCRATCH}/mutant-bin"
+  mkdir -p "$T20_MUT_BIN_DIR"
+  cp "${SCRIPT_DIR}/../_edm-cli-lib.sh" "${SCRIPT_DIR}/../_edm-lint-lib.sh" \
+     "${SCRIPT_DIR}/../_edm-datadir-lib.sh" "$T20_MUT_BIN_DIR/"
+  T20_MUT_BIN="${T20_MUT_BIN_DIR}/edm-state"
+  sed 's|^\(      echo "edm-state session-start: \[info\] removed stale Phase-6 marker.*\)$|\1\n      return 0|' \
+    "$T20_SRC_COPY" > "$T20_MUT_BIN"
+  chmod +x "$T20_MUT_BIN"
+
+  t20_mut_added="$(grep -c '^      return 0$' "$T20_MUT_BIN" || true)"
+  t20_src_added="$(grep -c '^      return 0$' "$T20_SRC_COPY" || true)"
+  t20_mut_delta=$(( t20_mut_added - t20_src_added ))
+  check_num "EDMDS-T20 AC3 -- the mutation applied to exactly one site (a no-op mutation would make this control vacuous)" "1" "$t20_mut_delta"
+
+  if bash -n "$T20_MUT_BIN" 2>/dev/null; then
+    pass "EDMDS-T20 AC3 -- the mutant binary parses, so a failure below is behavioural rather than a syntax error"
+  else
+    fail "EDMDS-T20 AC3 -- the mutant binary does not parse; the control cannot distinguish the defect from a broken fixture"
+  fi
+
+  T20_CTL_ROOT=""
+  t20_env T20_CTL_ROOT
+  t20_stage_stale "$T20_CTL_ROOT"
+  # The control must start from the same observable state as AC2, or a difference in outcome
+  # would not be attributable to the branch structure.
+  t20_ctl_before="$(t20_marker_state "$T20_CTL_ROOT")"
+  check "EDMDS-T20 AC3 -- the control fixture starts from the identical stale-marker state AC2 started from" \
+    "T20LFT" "$t20_ctl_before"
+
+  t20_session_start "$T20_CTL_ROOT" "$T20_MUT_BIN"
+  t20_ctl_removal_lines="$(printf '%s\n' "$T20_SS_OUT" | grep -c 'removed stale Phase-6 marker' || true)"
+  check_num "EDMDS-T20 AC3 -- the unfixed branches still remove the stale marker (the control differs only in what happens next)" "1" "$t20_ctl_removal_lines"
+
+  t20_ctl_state="$(t20_marker_state "$T20_CTL_ROOT")"
+  [[ "$t20_ctl_state" == "NONE" ]] \
+    && pass "EDMDS-T20 AC3 -- with the branches mutually exclusive the pass ends with NO marker even though T20ACT is at current_phase == 6" \
+    || fail "EDMDS-T20 AC3 -- expected the unfixed branches to leave no marker, got '${t20_ctl_state}' -- this control is not discriminating and AC2's pass means nothing"
+
+  t20_ctl_gg="$(t20_gateguard_rc "$T20_CTL_ROOT")"
+  check_num "EDMDS-T20 AC3 -- and edm-gateguard then ALLOWS a first-touch Edit: the Phase-6 gate is silently disabled" "0" "$t20_ctl_gg"
+
+  # The pair is the discriminator, stated once so a reader does not have to align two numbers.
+  [[ "$t20_pos_gg" -eq 2 && "$t20_ctl_gg" -eq 0 ]] \
+    && pass "EDMDS-T20 AC3 -- fixed and unfixed reach OPPOSITE gate outcomes on the identical fixture (armed=${t20_pos_gg} vs disabled=${t20_ctl_gg}), so the assertion is capable of failing" \
+    || fail "EDMDS-T20 AC3 -- fixed and unfixed reached the same gate outcome (fixed=${t20_pos_gg}, unfixed=${t20_ctl_gg}); the control cannot tell them apart"
+fi
+
+# D96's closing half: prove the shipped binary was never written to, rather than trusting that
+# nothing above did. A mutation harness that disarmed itself is what this check exists to catch.
+cmp -s "$EDM_STATE" "$T20_SRC_COPY" \
+  && pass "EDMDS-T20 AC3 -- the shipped edm-state is byte-identical to its pre-mutation copy; the harness never wrote to the source" \
+  || fail "EDMDS-T20 AC3 -- the shipped edm-state DIFFERS from its pre-mutation copy; the mutation harness has written to the real binary"
+
+# ---- AC4: the test seam -- read-check-delete is one callable function -------------------------
+# The seam is what makes EDMDS-10 AC5's interleaving reproducible on demand rather than raced
+# for, and it is a function boundary rather than an EDM_TEST_*-gated delay shipped on a hook path.
+t20_reconcile_defined="$(source "$EDM_STATE" >/dev/null 2>&1; declare -F _edm_marker_reconcile >/dev/null 2>&1 && echo yes || echo no)"
+check "EDMDS-T20 AC4 -- _edm_marker_reconcile is a defined function once edm-state is sourced (the dispatch guard runs no subcommand)" \
+  "yes" "$t20_reconcile_defined"
+
+# cmd_session_start delegates rather than keeping a second inline copy of the sequence: the
+# pre-change body's own local marker variable must no longer appear anywhere in the file, or
+# there are two reconciliations and only one of them is under test.
+t20_inline_leftovers="$(grep -c '_ss_marker_valid' "$EDM_STATE" || true)"
+check_num "EDMDS-T20 AC4 -- no inline copy of the read-check-delete sequence is left in cmd_session_start" "0" "$t20_inline_leftovers"
+
+# The seam exercised for real: the function is called directly, with a chosen membership string
+# and a marker this suite staged, in one process. No second edm-state runs, nothing sleeps, and
+# the outcome does not depend on which of two processes wins -- which is precisely the property
+# EDMDS-10 AC7 requires and that the two in-tree concurrency precedents do not have.
+T20_SEAM_ROOT=""
+t20_env T20_SEAM_ROOT
+t20_stage_stale "$T20_SEAM_ROOT"
+T20_SEAM_ACT_DIR="$(EDM_SRD_ROOT="${T20_SEAM_ROOT}/SRD" "$EDM_STATE" resolve-dir T20ACT 2>/dev/null)"
+(
+  cd "${T20_SEAM_ROOT}/proj" || exit 1
+  export CLAUDE_PROJECT_DIR="${T20_SEAM_ROOT}/proj"
+  export CLAUDE_PLUGIN_DATA="${T20_SEAM_ROOT}/data"
+  export EDM_SRD_ROOT="${T20_SEAM_ROOT}/SRD"
+  source "$EDM_STATE" >/dev/null 2>&1
+  _edm_marker_reconcile " T20ACT " "T20ACT" "$T20_SEAM_ACT_DIR"
+) >/dev/null 2>&1
+t20_seam_state="$(t20_marker_state "$T20_SEAM_ROOT")"
+[[ "$t20_seam_state" == "T20ACT" ]] \
+  && pass "EDMDS-T20 AC4 -- the seam is real: calling _edm_marker_reconcile directly reconciles the staged marker in one process, deterministically (${t20_seam_state})" \
+  || fail "EDMDS-T20 AC4 -- direct call to _edm_marker_reconcile left marker state '${t20_seam_state}', expected T20ACT"
+
+# The seam's point, demonstrated: with read-check-delete behind one function, a concurrent writer
+# can be injected at a CHOSEN point instead of raced for. `rm` is a function here, so it runs
+# between the function's read-and-check and the actual unlink -- exactly the CA-075 window.
+#
+# This asserts the SEAM works, not that the outcome is acceptable: the zero-marker result below
+# IS the CA-075 fail-open, and closing it is EDMDS-T21's project-scoped lock, not this ticket's.
+# What matters here is that it is now reproducible on demand rather than at random.
+T20_RACE_ROOT=""
+t20_env T20_RACE_ROOT
+t20_stage_stale "$T20_RACE_ROOT"
+T20_RACE_ACT_DIR="$(EDM_SRD_ROOT="${T20_RACE_ROOT}/SRD" "$EDM_STATE" resolve-dir T20ACT 2>/dev/null)"
+T20_RACE_MARKER="$(t20_marker_path "$T20_RACE_ROOT")"
+(
+  cd "${T20_RACE_ROOT}/proj" || exit 1
+  export CLAUDE_PROJECT_DIR="${T20_RACE_ROOT}/proj"
+  export CLAUDE_PLUGIN_DATA="${T20_RACE_ROOT}/data"
+  export EDM_SRD_ROOT="${T20_RACE_ROOT}/SRD"
+  source "$EDM_STATE" >/dev/null 2>&1
+  # The injected concurrent writer: a fresh, CORRECT marker lands after the stale one was read
+  # and judged, and before it is unlinked.
+  rm() {
+    printf 'T20ACT\t%s\t2026-01-01T00:00:00Z\n' "$T20_RACE_ACT_DIR" > "$T20_RACE_MARKER"
+    command rm "$@"
+  }
+  _edm_marker_reconcile " T20ACT " "" ""
+) >/dev/null 2>&1
+t20_race_state="$(t20_marker_state "$T20_RACE_ROOT")"
+[[ "$t20_race_state" == "NONE" ]] \
+  && pass "EDMDS-T20 AC4 -- the seam makes EDMDS-10 AC5's interleaving deterministic: a write injected between the read-check and the unlink loses its marker every run, not at random (EDMDS-T21's lock is what closes it)" \
+  || fail "EDMDS-T20 AC4 -- the injected concurrent write did not reproduce the interleaving (marker state '${t20_race_state}', expected NONE) -- the seam is not driving the window it claims to"
+
+# Control for the assertion immediately above: the identical call WITHOUT the injected writer
+# must leave the marker removed-and-not-replaced for a different reason than a lost write, so the
+# NONE above is attributable to the injection rather than to the call always producing NONE.
+T20_RACECTL_ROOT=""
+t20_env T20_RACECTL_ROOT
+t20_stage_stale "$T20_RACECTL_ROOT"
+(
+  cd "${T20_RACECTL_ROOT}/proj" || exit 1
+  export CLAUDE_PROJECT_DIR="${T20_RACECTL_ROOT}/proj"
+  export CLAUDE_PLUGIN_DATA="${T20_RACECTL_ROOT}/data"
+  export EDM_SRD_ROOT="${T20_RACECTL_ROOT}/SRD"
+  source "$EDM_STATE" >/dev/null 2>&1
+  _edm_marker_reconcile " T20ACT " "T20ACT" "$(EDM_SRD_ROOT="${T20_RACECTL_ROOT}/SRD" bash "$EDM_STATE" resolve-dir T20ACT 2>/dev/null)"
+) >/dev/null 2>&1
+t20_racectl_state="$(t20_marker_state "$T20_RACECTL_ROOT")"
+[[ "$t20_racectl_state" == "T20ACT" ]] \
+  && pass "EDMDS-T20 AC4 control -- without the injected writer the same staged fixture reconciles to T20ACT, so the NONE above is caused by the injection and not by the call itself" \
+  || fail "EDMDS-T20 AC4 control -- expected T20ACT without the injected writer, got '${t20_racectl_state}'; the race assertion above is not attributable to the injection"
+
+# Band-local branch invariance, closing the loop opened at the top of this band. Compared with
+# `==` rather than through check()'s SUBSTRING match (CA-016's lesson, applied to a non-numeric):
+# a substring form would pass "main" against "maintenance". The NOTAREPO sentinel is reported in
+# the label rather than swallowed, so a run that could not measure the branch at all is
+# distinguishable from one that measured it and found it unchanged.
+T20_BRANCH_AFTER="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'NOTAREPO')"
+[[ "$T20_BRANCH_BEFORE" == "$T20_BRANCH_AFTER" ]] \
+  && pass "EDMDS-T20 -- this band left the caller's branch where it found it (${T20_BRANCH_BEFORE}); edm-init checks out a branch in its cwd's repository, so every fixture here runs from a non-repository scratch directory" \
+  || fail "EDMDS-T20 -- this band MOVED the caller's branch: '${T20_BRANCH_BEFORE}' -> '${T20_BRANCH_AFTER}'; every assertion after the switch measured a different tree"
+
+# Restore the file-wide SRD root the bands above this one run under.
+export EDM_SRD_ROOT="$TMP/SRD"
+
 # ---- Summary -----------------------------------------------------------------
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
