@@ -99,11 +99,17 @@ mkdir -p "$CLAUDE_PLUGIN_DATA" "$XDG_DATA_HOME" "$HOME"
 # explicit --lenses list. Each lens file carries the canonical EDMDS-T14 line shape: schema 1,
 # a `lens` matching its own filename, a `sev` from the closed severity set, and a `round`
 # matching the round being completed -- the four properties EDMDS-T13's check (1) requires.
+#
+# EDMDS-T17: the root it writes under is a variable rather than a literal, so the census band at
+# the end of this file can build its positive-control fixtures under a SEPARATE scratch root
+# using this same delivery shape instead of a second hand-written copy of it. Callers that
+# change it restore it immediately; every ordinary caller ignores it.
+DELIVER_CODE_ROUND_ROOT="$TMP/SRD"
 deliver_code_round() {
   local _prefix="$1"
   local _round="${2:-1}"
   if [[ $# -ge 2 ]]; then shift 2; else shift 1; fi
-  local _dir="$TMP/SRD/${_prefix}/code-audit/pass-${_round}_2026-08-16"
+  local _dir="${DELIVER_CODE_ROUND_ROOT}/${_prefix}/code-audit/pass-${_round}_2026-08-16"
   mkdir -p "$_dir"
   printf 'Round type: full\n' > "${_dir}/lenses-run.txt"
   local _n _lens
@@ -118,6 +124,26 @@ deliver_code_round() {
         "$_n" "$_round" > "${_dir}/lens-L${_n}.jsonl"
     done
   fi
+}
+
+# EDMDS-T17 (EDMDS-07 AC4): read back what a completion actually RECORDED.
+#
+#   t17_round_type_of <PREFIX> [<AUDIT_TYPE>]
+#
+# Prints the round_type of the last recorded round of that audit type (default `code`) for an
+# initiative in this suite's scratch root, or the literal `absent` when there is no such round.
+# The sentinel is the point: a reader that printed an empty string for "no round recorded"
+# would make a `!= full` control pass for a fixture that never ran a round at all -- the same
+# code for "defect found" and "nothing to look at", which is a control that cannot fail. Every
+# caller below therefore compares against a named value, never against emptiness.
+t17_round_type_of() {
+  local _prefix="$1"
+  local _type="${2:-code}"
+  local _rt
+  _rt="$(jq -r --arg t "$_type" '.audit_rounds[$t].rounds[-1].round_type // "absent"' \
+    "$TMP/SRD/${_prefix}/.edm-state.json" 2>/dev/null)"
+  [[ -n "$_rt" && "$_rt" != "null" ]] || _rt="absent"
+  printf '%s' "$_rt"
 }
 
 echo "wave6 smoke check -- EDMV3-T05 anomaly classes, EDMV3-T07 mode helpers"
@@ -766,6 +792,37 @@ STATE_PDEBT1="$TMP/SRD/PDEBT1/.edm-state.json"
 check_refuses_and_leaves_state "accept-p2-debt still refuses with an open P1" \
   "code-audit gate refused" "$STATE_PDEBT1" \
   "$EDM_STATE" approve-gate PDEBT1 code-audit --accept-p2-debt
+# ---- EDMDS-T17 AC4: re-check the downstream expectation, not just its exit code. "code-audit
+# gate refused" is the prefix of EVERY refusal arm of this verb, including the one a downgraded
+# round produces, so the assertion above alone cannot tell an open-P1 refusal from a round-type
+# refusal -- and this case exists to pin the first. The refusal is re-read here (the assertion
+# above has already proven the verb mutates nothing, so a second invocation is safe) and the
+# arm is named.
+pdebt1_refusal_out="$("$EDM_STATE" approve-gate PDEBT1 code-audit --accept-p2-debt 2>&1)" || true
+check "EDMDS-T17 AC4 -- the PDEBT1 refusal is the open-P1 severity arm, naming the counts it refused on" \
+  "open P0=0 P1=1" "$pdebt1_refusal_out"
+check_absent "EDMDS-T17 AC4 -- it is NOT the non-severity arm a downgraded round would produce" \
+  "not a severity refusal" "$pdebt1_refusal_out"
+[[ "$(t17_round_type_of PDEBT1)" == "full" ]] \
+  && pass "EDMDS-T17 AC4 -- PDEBT1's round is delivered (round_type=full), which is the precondition that makes the refusal above a severity refusal" \
+  || fail "EDMDS-T17 AC4 -- PDEBT1 round_type='$(t17_round_type_of PDEBT1)', expected full"
+
+# ---- EDMDS-T17 AC7 (control for the P2-debt band): the same fixture with the delivery
+# withheld refuses through the OTHER arm. This is what proves the two assertions above
+# discriminate: the refusal text moves, in both directions, when the round's delivery moves.
+"$EDM_STATE" init T17PDEBTCTL >/dev/null
+mkdir -p "$TMP/SRD/T17PDEBTCTL/code-audit"
+cat > "$TMP/SRD/T17PDEBTCTL/code-audit/findings-ledger.jsonl" <<'EOF'
+{"id":"CA-D01","status":"open","sev":"P1","title":"still open p1"}
+{"id":"CA-D02","status":"open","sev":"P2","title":"open p2 one"}
+EOF
+"$EDM_STATE" audit-round-start T17PDEBTCTL code >/dev/null
+"$EDM_STATE" audit-round-complete T17PDEBTCTL code >/dev/null 2>&1
+t17pdebtctl_out="$("$EDM_STATE" approve-gate T17PDEBTCTL code-audit --accept-p2-debt 2>&1)" || true
+check "EDMDS-T17 AC7 control -- with the delivery withheld the refusal is the non-severity arm instead" \
+  "not a severity refusal" "$t17pdebtctl_out"
+check_absent "EDMDS-T17 AC7 control -- and the open-P1 counts the assertion above pins are absent from it, so that assertion is not inert" \
+  "open P0=0 P1=1" "$t17pdebtctl_out"
 
 echo
 echo "EDMV3-T68 -- approve-gate code-audit --accept-p2-debt converges when only P2s remain, records debt fields"
@@ -794,6 +851,12 @@ pdebt2_debt_flag="$(jq -r '.code_audit_p2_debt_accepted' "$STATE_PDEBT2")"
 pdebt2_debt_count="$(jq -r '.code_audit_p2_debt_count' "$STATE_PDEBT2")"
 [[ "$pdebt2_debt_count" -eq 2 ]] && pass "accept-p2-debt records code_audit_p2_debt_count=2" \
   || fail "code_audit_p2_debt_count=$pdebt2_debt_count, expected 2"
+# EDMDS-T17 AC4: the round this converged on is a delivered one -- --accept-p2-debt is a
+# severity override and never converges a downgraded round, so the success above is only
+# meaningful while this holds.
+[[ "$(t17_round_type_of PDEBT2)" == "full" ]] \
+  && pass "EDMDS-T17 AC4 -- PDEBT2 converged on a delivered round (round_type=full)" \
+  || fail "EDMDS-T17 AC4 -- PDEBT2 round_type='$(t17_round_type_of PDEBT2)', expected full"
 
 echo
 echo "EDMV3-T68 -- HANDOFF's code-audit gate row surfaces the accepted P2 debt"
@@ -845,6 +908,14 @@ pdebt3_archive_out="$("$EDM_STATE" archive PDEBT3 2>&1)" || pdebt3_archive_ec=$?
   || fail "archive succeeded despite a new round completing since debt acceptance (staleness guard did not fire)"
 check "archive staleness refusal points back at accept-p2-debt for re-acceptance" \
   "accept-p2-debt" "$pdebt3_archive_out"
+# EDMDS-T17 AC4: BOTH of this case's rounds must be delivered -- the first so the acceptance is
+# a severity acceptance, the second so the staleness guard fires on a genuinely new full round
+# rather than on one the completeness gate downgraded. Read as a list so a downgrade of either
+# round is named, not just the last.
+pdebt3_round_types="$(jq -r '[.audit_rounds.code.rounds[].round_type] | join(",")' "$STATE_PDEBT3")"
+[[ "$pdebt3_round_types" == "full,full" ]] \
+  && pass "EDMDS-T17 AC4 -- both PDEBT3 rounds are delivered (round_type=full,full), so the staleness guard fired on a new FULL round" \
+  || fail "EDMDS-T17 AC4 -- PDEBT3 round types='$pdebt3_round_types', expected full,full"
 
 # =================================================================================
 # CA-425: the safety guard that narrows --accept-p2-debt to genuine severity refusals had zero
@@ -871,11 +942,22 @@ EOF
 # undelivered would make it partial for the non-delivery reason too, and the case would no
 # longer discriminate.
 deliver_code_round PDEBT4 1 L1
-"$EDM_STATE" audit-round-complete PDEBT4 code >/dev/null
+pdebt4_complete_out="$("$EDM_STATE" audit-round-complete PDEBT4 code 2>&1)"
 STATE_PDEBT4="$TMP/SRD/PDEBT4/.edm-state.json"
 check_refuses_and_leaves_state "accept-p2-debt refuses when the latest round is partial" \
   "not a severity refusal" "$STATE_PDEBT4" \
   "$EDM_STATE" approve-gate PDEBT4 code-audit --accept-p2-debt
+# ---- EDMDS-T17 AC4: this is the one P2-debt case whose round is SUPPOSED to be partial, so
+# the re-check here is the opposite of the others -- it must be partial for the narrow-lenses
+# reason this case pins, and NOT for non-delivery. Without this pair the fixture would satisfy
+# "the latest round is partial" whether or not the delivery above ever ran, and the case would
+# stop discriminating between the two causes it exists to tell apart.
+check_absent "EDMDS-T17 AC4 -- PDEBT4's round is not partial for the non-delivery reason" \
+  "CA-091" "$pdebt4_complete_out"
+pdebt4_lenses="$(jq -c '.audit_rounds.code.rounds[-1].lenses' "$STATE_PDEBT4")"
+[[ "$pdebt4_lenses" == '["L1"]' && "$(t17_round_type_of PDEBT4)" == "partial" ]] \
+  && pass "EDMDS-T17 AC4 -- PDEBT4's round is partial by the narrow lens list it declared at round-start (lenses=[\"L1\"]), which is the cause this case pins" \
+  || fail "EDMDS-T17 AC4 -- PDEBT4 lenses='$pdebt4_lenses' round_type='$(t17_round_type_of PDEBT4)', expected [\"L1\"] and partial"
 
 echo
 echo "CA-425 -- accept-p2-debt refuses on an invalid (unparseable) findings ledger"
@@ -891,6 +973,11 @@ STATE_PDEBT5="$TMP/SRD/PDEBT5/.edm-state.json"
 check_refuses_and_leaves_state "accept-p2-debt refuses when the ledger is invalid JSONL" \
   "not a severity refusal" "$STATE_PDEBT5" \
   "$EDM_STATE" approve-gate PDEBT5 code-audit --accept-p2-debt
+# EDMDS-T17 AC4: an undelivered round would refuse through this same non-severity arm, so
+# without this pin the case would pass for the round's shape rather than for the ledger's.
+[[ "$(t17_round_type_of PDEBT5)" == "full" ]] \
+  && pass "EDMDS-T17 AC4 -- PDEBT5's round is delivered (round_type=full), so the refusal above is about the unparseable ledger" \
+  || fail "EDMDS-T17 AC4 -- PDEBT5 round_type='$(t17_round_type_of PDEBT5)', expected full"
 
 echo
 echo "CA-425 -- the two usage arms refuse: wrong gate, unrecognized third argument"
@@ -5817,6 +5904,14 @@ STATE_T51ROUND="$TMP/SRD/T51ROUND/.edm-state.json"
 "$EDM_STATE" audit-round-start T51ROUND code >/dev/null
 sleep 1
 stage_session_jsonl "$T51_SESS_DIR" "session-1.jsonl" "claude-sonnet-4-6-20260601" 2000 800
+# EDMDS-T17 (EDMDS-07 AC4): this is one of the two plain code-round completions EDMDS-07's own
+# derivation names. It never delivered anything, so after EDMDS-T16 it silently became a
+# NON-DELIVERED round recorded round_type=partial -- and not one assertion below noticed,
+# because duration_seconds, estimated_cost_usd and completed_at are all recorded identically
+# for a partial round. The fixture stopped meaning what it says it means while staying green.
+# It is delivered here through the shared helper, and the round_type pin immediately after the
+# completion is what stops that drift happening silently a second time.
+deliver_code_round T51ROUND
 t51_complete_out="$("$EDM_STATE" audit-round-complete T51ROUND code 2>&1)"
 t51_dur="$(jq -r '.audit_rounds.code.rounds[-1].duration_seconds' "$STATE_T51ROUND")"
 t51_cost="$(jq -r '.audit_rounds.code.rounds[-1].estimated_cost_usd' "$STATE_T51ROUND")"
@@ -5828,6 +5923,40 @@ awk -v c="$t51_cost" 'BEGIN{exit !(c>0)}' \
   || fail "T51 AC1 -- round estimated_cost_usd = '$t51_cost', expected > 0"
 check "T51 AC1 -- round completed_at recorded" \
   "true" "$(jq -r '.audit_rounds.code.rounds[-1].completed_at != null' "$STATE_T51ROUND")"
+# ---- EDMDS-T17 AC3: the fixture says what it is. The three assertions above measure the cost
+# of a COMPLETED CODE-AUDIT ROUND; a round the completeness gate downgraded for non-delivery is
+# not that, and nothing above can tell the two apart. This pin is the one assertion in the band
+# that can.
+[[ "$(t17_round_type_of T51ROUND)" == "full" ]] \
+  && pass "EDMDS-T17 AC3 -- T51ROUND's completion is a DELIVERED round (round_type=full), so the cost fields above are measured on the round shape this case claims to represent" \
+  || fail "EDMDS-T17 AC3 -- T51ROUND round_type='$(t17_round_type_of T51ROUND)', expected full -- the fixture is no longer a delivered round"
+
+# ---- EDMDS-T17 AC7 (control for the band above): the identical fixture MINUS the delivery.
+# Two things are proven here, and the second is why the drift above went unseen for a whole
+# wave. First, the pin is not inert: the same predicate reads `partial` on this twin, so it
+# fails when its expectation is violated. Second, every OTHER assertion in the T51 AC1 band
+# still holds on the twin -- duration, cost and completed_at are recorded identically for a
+# non-delivered round -- which is exactly why a green suite could not notice the fixture had
+# stopped meaning what it says.
+"$EDM_STATE" init T17T51CTL >/dev/null
+STATE_T17T51CTL="$TMP/SRD/T17T51CTL/.edm-state.json"
+"$EDM_STATE" audit-round-start T17T51CTL code >/dev/null
+sleep 1
+stage_session_jsonl "$T51_SESS_DIR" "session-1-ctl.jsonl" "claude-sonnet-4-6-20260601" 2000 800
+"$EDM_STATE" audit-round-complete T17T51CTL code >/dev/null 2>&1
+[[ "$(t17_round_type_of T17T51CTL)" == "partial" ]] \
+  && pass "EDMDS-T17 AC7 control -- the same fixture with the delivery withheld records round_type=partial, so the pin above fails when its expectation is violated" \
+  || fail "EDMDS-T17 AC7 control -- undelivered twin round_type='$(t17_round_type_of T17T51CTL)', expected partial -- the pin above would pass either way"
+t17t51ctl_dur="$(jq -r '.audit_rounds.code.rounds[-1].duration_seconds' "$STATE_T17T51CTL")"
+t17t51ctl_cost="$(jq -r '.audit_rounds.code.rounds[-1].estimated_cost_usd' "$STATE_T17T51CTL")"
+t17t51ctl_blind=0
+[[ "$t17t51ctl_dur" -gt 0 ]] 2>/dev/null || t17t51ctl_blind=1
+awk -v c="$t17t51ctl_cost" 'BEGIN{exit !(c>0)}' || t17t51ctl_blind=1
+[[ "$(jq -r '.audit_rounds.code.rounds[-1].completed_at != null' "$STATE_T17T51CTL")" == "true" ]] \
+  || t17t51ctl_blind=1
+[[ "$t17t51ctl_blind" -eq 0 ]] \
+  && pass "EDMDS-T17 AC7 control -- duration, cost and completed_at are ALL still recorded on the undelivered twin, so the band's pre-existing assertions are round_type-blind and the pin above is the only one that catches the drift" \
+  || fail "EDMDS-T17 AC7 control -- an undelivered round failed one of the band's pre-existing assertions (duration='$t17t51ctl_dur' cost='$t17t51ctl_cost'), so the pin's stated justification no longer holds and this control needs re-deriving"
 
 # ---- AC4/AC5 (negative, an unclosed round is visible as an info anomaly): audit-round-start
 # with no matching audit-round-complete surfaces OPEN_AUDIT_ROUND, informational only. ---------
@@ -6338,12 +6467,41 @@ echo
 echo "T53 AC8 -- metrics-report code-audit section names rounds run and lenses per round"
 "$EDM_STATE" audit-round-start T53DEFAULT code >/dev/null
 sleep 1
+# EDMDS-T17 (EDMDS-07 AC4): the second of the two plain code-round completions EDMDS-07's
+# derivation names. Same story as the T51 AC1 band -- "rounds run" and "lenses per round" are
+# rendered for a downgraded round exactly as for a delivered one, so after EDMDS-T16 this
+# fixture quietly became a non-delivered round with every assertion below still green.
+deliver_code_round T53DEFAULT
 "$EDM_STATE" audit-round-complete T53DEFAULT code >/dev/null
 t53_code_audit_out="$("$EDM_STATE" metrics-report T53DEFAULT 2>&1)"
 check "T53 AC8 -- 'rounds run' present once a code-audit round completes" \
   "rounds run" "$t53_code_audit_out"
 check "T53 AC8 -- 'lenses per round' present once a code-audit round completes" \
   "lenses per round" "$t53_code_audit_out"
+# ---- EDMDS-T17 AC3: pin what the fixture is, not just what it renders.
+[[ "$(t17_round_type_of T53DEFAULT)" == "full" ]] \
+  && pass "EDMDS-T17 AC3 -- T53DEFAULT's code-audit round is a DELIVERED round (round_type=full), so the metrics section above is rendered for the round shape this case claims to represent" \
+  || fail "EDMDS-T17 AC3 -- T53DEFAULT round_type='$(t17_round_type_of T53DEFAULT)', expected full -- the fixture is no longer a delivered round"
+
+# ---- EDMDS-T17 AC7 (control for the band above): the same shape with the delivery withheld.
+# The pin reads `partial` here, so it fails when its expectation is violated; and both of the
+# band's pre-existing AC8 strings are STILL rendered for that downgraded round, which is why
+# the drift was invisible.
+"$EDM_STATE" init T17T53CTL >/dev/null
+"$EDM_STATE" phase-start T17T53CTL 1 >/dev/null
+echo "planning notes" > "$TMP/SRD/T17T53CTL/planning.md"
+"$EDM_STATE" phase-complete T17T53CTL 1 >/dev/null
+"$EDM_STATE" audit-round-start T17T53CTL code >/dev/null
+sleep 1
+"$EDM_STATE" audit-round-complete T17T53CTL code >/dev/null 2>&1
+[[ "$(t17_round_type_of T17T53CTL)" == "partial" ]] \
+  && pass "EDMDS-T17 AC7 control -- the same fixture with the delivery withheld records round_type=partial, so the pin above fails when its expectation is violated" \
+  || fail "EDMDS-T17 AC7 control -- undelivered twin round_type='$(t17_round_type_of T17T53CTL)', expected partial -- the pin above would pass either way"
+t17t53ctl_out="$("$EDM_STATE" metrics-report T17T53CTL 2>&1)"
+check "EDMDS-T17 AC7 control -- 'rounds run' is rendered for the UNDELIVERED round too, so T53 AC8's first assertion is round_type-blind" \
+  "rounds run" "$t17t53ctl_out"
+check "EDMDS-T17 AC7 control -- 'lenses per round' is rendered for the UNDELIVERED round too, so T53 AC8's second assertion is round_type-blind" \
+  "lenses per round" "$t17t53ctl_out"
 
 echo
 echo "T53 AC9 -- tiered-vs-untiered section omitted when no tiering data exists (T48 not landed)"
@@ -7104,6 +7262,179 @@ else
     && pass "EDMDS-T19 AC6 -- the archived EDMV4 state file is byte-identical after this block (read only, never mutated)" \
     || fail "EDMDS-T19 AC6 -- archived EDMV4 state file changed (before '$t19_edmv4_hash_before', after '$t19_edmv4_hash_after')"
 fi
+
+# =================================================================================
+# EDMDS-T17 (EDMDS-07 AC4/AC5): the round-type census.
+#
+# Why a census rather than one more per-site assertion. EDMDS-07 changed what a `code` round
+# completion RECORDS, and the two plain completions that silently changed meaning under it --
+# the ones this ticket amends above -- were missed not because anyone read carelessly but
+# because nothing in the suite asserted the property that moved. Every assertion those fixtures
+# carried (duration, cost, completed_at, the metrics section headings) is recorded identically
+# for a downgraded round, so a fixture could stop being what it says it is and stay green. A
+# per-site pin fixes the sites known today and does nothing for the next fixture added without
+# one.
+#
+# So the invariant is asserted over the whole set at once, derived live from state at the end
+# of the run rather than from a list anyone must remember to update: NO full-coverage code
+# round completed by this suite is recorded `partial` unless it is declared below WITH the
+# assertion that owns it. A fixture that silently downgrades shows up as an undeclared
+# downgrade and fails, by name. A declared downgrade that stops happening fails too -- a stale
+# declaration is a case that has quietly stopped exercising what it claims.
+#
+# Scoped to FULL-COVERAGE rounds on purpose. A round started with a deliberately narrow
+# --lenses list is recorded partial by the union rule at round-START, before any completion
+# runs; that is a different property, owned by the bands that choose the narrow list, and
+# sweeping it in here would bury the completion-time downgrades this requirement is about under
+# two dozen unrelated declarations. Coverage is measured against the lens set a round started
+# WITHOUT --lenses materializes, read back live from the control initiative below, so no lens
+# count is written here.
+#
+# Its honest limit, stated rather than left to be discovered: the census reads the state files
+# that still exist under this suite's own scratch root when it runs. Fixtures built inside
+# with_scratch_repo live in their own root and are torn down with it, so they are outside this
+# sweep and stay owned by their own bands' assertions.
+# =================================================================================
+echo
+echo "EDMDS-T17 -- round-type census: no full-coverage code round is silently recorded partial"
+
+# t17_downgraded_code_rounds <SRD_ROOT> <ALL_LENSES_CSV> -- print "<PREFIX> <ROUND>" for each
+# recorded code round that is `partial` DESPITE covering the whole lens set, i.e. one that was
+# downgraded at completion rather than started narrow. A pure enumerator: it prints what it
+# found and says nothing about whether that is good or bad, because "found no downgrades" and
+# "found no rounds to look at" produce the same empty output here and must never collapse into
+# the same verdict. Every caller pairs it with a separate assertion that the census saw rounds.
+t17_downgraded_code_rounds() {
+  local _root="$1" _all="$2" _st _pfx
+  for _st in "$_root"/*/.edm-state.json; do
+    [[ -f "$_st" ]] || continue
+    _pfx="$(basename "$(dirname "$_st")")"
+    # The legacy bare-integer audit_rounds.code shape is a number, not an object; guarding on
+    # type keeps this from hard-erroring on the C-4 fixtures this suite deliberately builds.
+    jq -r --arg p "$_pfx" --arg all "$_all" \
+      '(.audit_rounds.code | if type == "object" then (.rounds // []) else [] end)
+       | .[]
+       | select(.round_type == "partial")
+       | select((((.lenses // []) + (.lenses_na // [])) | unique | join(",")) == $all)
+       | "\($p) \(.round)"' "$_st" 2>/dev/null
+  done
+}
+
+# t17_full_coverage_code_rounds <SRD_ROOT> <ALL_LENSES_CSV> -- how many code rounds of ANY type
+# the census can see over the same population the invariant ranges over. This is what makes the
+# clean verdict falsifiable: a sweep that examined nothing satisfies an "all clear" trivially.
+t17_full_coverage_code_rounds() {
+  local _root="$1" _all="$2" _st _n=0 _c
+  for _st in "$_root"/*/.edm-state.json; do
+    [[ -f "$_st" ]] || continue
+    _c="$(jq -r --arg all "$_all" \
+      '[(.audit_rounds.code | if type == "object" then (.rounds // []) else [] end)
+        | .[]
+        | select((((.lenses // []) + (.lenses_na // [])) | unique | join(",")) == $all)] | length' \
+      "$_st" 2>/dev/null)"
+    [[ "$_c" =~ ^[0-9]+$ ]] || _c=0
+    _n=$(( _n + _c ))
+  done
+  printf '%s' "$_n"
+}
+
+# ---- The control root, built first because the census's own notion of "full coverage" is read
+# back from it. Two initiatives, identical but for the delivery: the enumerator must name the
+# undelivered one and only it. A sweep that reported nothing, or everything, would satisfy the
+# assertions below just as well; this is what separates "found no undeclared downgrade" from
+# "cannot find a downgrade at all".
+T17CENSUS_ROOT="$TMP/t17-census-control"
+mkdir -p "$T17CENSUS_ROOT"
+EDM_SRD_ROOT="$T17CENSUS_ROOT" "$EDM_STATE" init T17CENSOK >/dev/null
+EDM_SRD_ROOT="$T17CENSUS_ROOT" "$EDM_STATE" audit-round-start T17CENSOK code >/dev/null
+DELIVER_CODE_ROUND_ROOT="$T17CENSUS_ROOT"
+deliver_code_round T17CENSOK
+DELIVER_CODE_ROUND_ROOT="$TMP/SRD"
+EDM_SRD_ROOT="$T17CENSUS_ROOT" "$EDM_STATE" audit-round-complete T17CENSOK code >/dev/null 2>&1
+EDM_SRD_ROOT="$T17CENSUS_ROOT" "$EDM_STATE" init T17CENSBAD >/dev/null
+EDM_SRD_ROOT="$T17CENSUS_ROOT" "$EDM_STATE" audit-round-start T17CENSBAD code >/dev/null
+EDM_SRD_ROOT="$T17CENSUS_ROOT" "$EDM_STATE" audit-round-complete T17CENSBAD code >/dev/null 2>&1
+
+# The full lens set, taken from the round the control started without --lenses -- a live read,
+# so a change to the lens set moves this with it instead of silently narrowing the census.
+T17_ALL_LENSES="$(jq -r '.audit_rounds.code.rounds[-1] | ((.lenses // []) + (.lenses_na // [])) | unique | join(",")' \
+  "$T17CENSUS_ROOT/T17CENSOK/.edm-state.json")"
+[[ -n "$T17_ALL_LENSES" && "$T17_ALL_LENSES" == *","* ]] \
+  && pass "EDMDS-T17 AC4 -- the census derived the full lens set live from a round started without --lenses (${T17_ALL_LENSES})" \
+  || fail "EDMDS-T17 AC4 -- could not derive the full lens set (got '${T17_ALL_LENSES}') -- the census below would range over nothing"
+
+t17_control_out="$(t17_downgraded_code_rounds "$T17CENSUS_ROOT" "$T17_ALL_LENSES" | sort | tr '\n' ' ')"
+[[ "$t17_control_out" == "T17CENSBAD 1 " ]] \
+  && pass "EDMDS-T17 AC7 control -- the census names the undelivered initiative and only it (got '${t17_control_out% }'), so a silent downgrade is detectable and a delivered round is not mistaken for one" \
+  || fail "EDMDS-T17 AC7 control -- census over the control root returned '${t17_control_out}', expected exactly 'T17CENSBAD 1' -- the sweep cannot tell a downgraded round from a delivered one"
+
+# The declared set. Each entry is a full-coverage code round this suite MEANS to leave
+# downgraded, and each names the band that asserts the downgrade and its cause -- so a
+# declaration is a pointer to an assertion, never a suppression.
+#   CA471MISS     -- CA-471 check (1): a lens with no landed JSONL.
+#   CA471NODIR    -- EDMDS-T16 AC1 sub-cause (a): no pass directory at all.
+#   CA478NONL     -- CA-478: a manifest with no trailing newline.
+#   CA478CRLF     -- CA-478: a CRLF manifest.
+#   T13SENTMISS   -- EDMDS-T13: the empty-finding sentinel absent for a lens that found nothing.
+#   T13SENTNOCONF -- EDMDS-T13: a sentinel without its confirmation field.
+#   T16NOMAN      -- EDMDS-T16 AC1 sub-cause (b): a pass directory with no manifest.
+#   T16DELIVCTL   -- EDMDS-T16 AC3's control: a delivered round minus its manifest.
+#   T17T51CTL     -- EDMDS-T17 AC7's control for the per-round cost band.
+#   T17T53CTL     -- EDMDS-T17 AC7's control for the metrics code-audit-section band.
+#   T17PDEBTCTL   -- EDMDS-T17 AC7's control for the P2-debt band.
+#   T22AC6        -- EDMV4-T22: the recorded-lenses case.
+#   T23AC4        -- EDMV4-T23 downgrade reason 2: a JSONL landed for an N/A lens.
+#   T23AC9        -- EDMV4-T23 AC9, amended by EDMDS-T16 to pin the inverted expectation.
+t17_declared_downgrades() {
+  cat <<'T17DECL'
+CA471MISS 1
+CA471NODIR 1
+CA478CRLF 1
+CA478NONL 1
+T13SENTMISS 1
+T13SENTNOCONF 1
+T16DELIVCTL 1
+T16NOMAN 1
+T17PDEBTCTL 1
+T17T51CTL 1
+T17T53CTL 1
+T22AC6 1
+T23AC4 1
+T23AC9 1
+T17DECL
+}
+
+# Compared through files rather than here-strings: an empty observed set rendered as a variable
+# still carries one empty line, which comm reads as a member and reports as an undeclared
+# downgrade named "". Files make the empty set genuinely empty.
+T17_OBSERVED_FILE="$TMP/t17-observed-downgrades.txt"
+T17_DECLARED_FILE="$TMP/t17-declared-downgrades.txt"
+t17_downgraded_code_rounds "$TMP/SRD" "$T17_ALL_LENSES" | sort > "$T17_OBSERVED_FILE"
+t17_declared_downgrades | sort > "$T17_DECLARED_FILE"
+t17_rounds_seen="$(t17_full_coverage_code_rounds "$TMP/SRD" "$T17_ALL_LENSES")"
+t17_declared_count="$(wc -l < "$T17_DECLARED_FILE" | tr -d ' ')"
+
+# Undeclared downgrades: a fixture that lost its delivery without anyone noticing -- the exact
+# shape EDMDS-07 found at the two plain completions amended above.
+t17_undeclared="$(comm -23 "$T17_OBSERVED_FILE" "$T17_DECLARED_FILE")"
+[[ -z "$t17_undeclared" ]] \
+  && pass "EDMDS-T17 AC4 -- every full-coverage code round this suite records as partial is a declared, separately-asserted downgrade (${t17_rounds_seen} full-coverage round(s) censused)" \
+  || fail "EDMDS-T17 AC4 -- code round(s) silently downgraded with no assertion owning it: $(printf '%s' "$t17_undeclared" | tr '\n' ' ')"
+
+# Stale declarations: a declared downgrade that stopped happening is a case that has quietly
+# stopped exercising what it claims, and is as much a drift as an undeclared one.
+t17_stale="$(comm -13 "$T17_OBSERVED_FILE" "$T17_DECLARED_FILE")"
+[[ -z "$t17_stale" ]] \
+  && pass "EDMDS-T17 AC4 -- every declared downgrade actually happened; no declaration has gone stale" \
+  || fail "EDMDS-T17 AC4 -- declared as downgraded but recorded otherwise: $(printf '%s' "$t17_stale" | tr '\n' ' ')"
+
+# Non-vacuity: the two comparisons above are satisfiable by a census that examined nothing. The
+# floor is derived from the declaration, not typed as a literal -- there must be more
+# full-coverage code rounds in this suite than the ones declared downgraded, or the census is
+# not seeing the delivered majority and the clean verdict above means nothing.
+[[ "$t17_rounds_seen" -gt "$t17_declared_count" ]] \
+  && pass "EDMDS-T17 AC4 -- the census saw ${t17_rounds_seen} full-coverage code round(s) against ${t17_declared_count} declared downgrade(s), so it is reading delivered rounds too -- not an empty sweep" \
+  || fail "EDMDS-T17 AC4 -- census saw only ${t17_rounds_seen} full-coverage code round(s) for ${t17_declared_count} declared downgrade(s) -- the derivation is broken, not the invariant"
 
 # ---- Summary -----------------------------------------------------------------
 echo
