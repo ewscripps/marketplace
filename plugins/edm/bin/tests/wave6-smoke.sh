@@ -1323,7 +1323,8 @@ check_absent "CA-525 -- positive control: a mutated instruction missing 'Round t
 # This band replaces, rather than sits beside, the two assertions that used to stand here --
 # "no pass directory means the gate stays silent (C-4)" and "a manifest-less round keeps its
 # recorded round_type (full)". Both pinned the residual gap EDMV4's D40 accepted and reserved
-# the unused ID `CAMGAP` for; EDMDS-07 decided that gap closed, so their expectations are
+# an unused follow-on initiative ID for -- a reservation EDMDS-18 has since RELEASED, which is
+# why the ID is not repeated here; EDMDS-07 decided that gap closed, so their expectations are
 # inverted here rather than deleted (the old expectations are recorded as D67). Note the first
 # of the two would have gone on PASSING vacuously after this change, because the new warn
 # carries the `CA-091` prefix and it searched for `CA-471` -- an inert green, which is why it is

@@ -5241,11 +5241,14 @@ _cmd_audit_round_complete_body() {
     #      that signal produced no consequence whatsoever: checks (1)-(3) below were gated on the
     #      manifest's existence, and a round that never wrote one sailed past every one of them
     #      and kept whatever round_type it was recorded with at round-start (EDMV4's D40 named
-    #      this residual gap, reserved the ID `CAMGAP` for it, and closed the ticket without
-    #      using it). The manifest's existence is therefore no longer the gate TRIGGER for a
-    #      `code` round -- its absence IS the finding. Two separately-named sub-causes, because
-    #      they need different operator responses: a round that wrote nothing at all versus a
-    #      round whose lens agents wrote into a directory but never rendered a manifest.
+    #      this residual gap, reserved a follow-on initiative ID for it, and closed the ticket
+    #      without using it; that reservation is released now the gap is closed, EDMDS-18/D83,
+    #      and the ID is not repeated here -- a released reservation named in running prose
+    #      reads exactly like a live one). The manifest's existence is therefore no longer the
+    #      gate TRIGGER for a `code` round -- its absence IS the finding. Two separately-named
+    #      sub-causes, because they need different operator responses: a round that wrote
+    #      nothing at all versus a round whose lens agents wrote into a directory but never
+    #      rendered a manifest.
     #      This is deliberately scoped to `code` (the enclosing branch): `srd`/`tickets` rounds
     #      never produce a pass directory, and C-4 legacy `code` rounds recorded before any of
     #      this existed are downgraded by design -- a round nobody can prove delivered is exactly

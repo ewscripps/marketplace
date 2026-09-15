@@ -3736,9 +3736,13 @@ DOCS_DIR_T56="${PLUGIN_DIR}/docs/audit-patterns"
 # docs/audit-patterns/*.md files and found every one carrying exactly 4 "## " headings and no
 # orphan "### ". The assertion below passes against the live tree and has done since b697142.
 # The marker is dropped rather than re-pointed: no residual obligation remains, so there is
-# nothing to reserve a follow-on prefix for (contrast EVALB, CAMGAP, LINUXV and EDMRT, which this
-# initiative did reserve because real work remained behind each). Left as a marker, it would send
-# a future reader hunting for a defect that no longer exists.
+# nothing to reserve a follow-on prefix for (contrast EDMRT, the one EDMV4 reservation still live,
+# which it made because real work remained behind it). EDMV4 reserved three others; all three were
+# RELEASED by EDMDS-18, and their names are deliberately not repeated here, because a released
+# prefix left sitting in running prose reads exactly like a live one -- the owning initiative's
+# decisions.md is the authoritative record of which reservations are live, and the EDMDS-T39 band
+# at the foot of this file asserts that no released name survives anywhere under the plugin root.
+# Left as a marker, it would send a future reader hunting for a defect that no longer exists.
 echo "T56 AC1/AC7 -- five pattern docs carry four headings in contract order (also re-verifies"
 echo "  this initiative's own T42 Mermaid entries and T33 D15 entries did not break it)"
 set +e
@@ -10578,6 +10582,92 @@ check "EDMDS-T17 control -- and it refuses for the ROUND-TYPE reason by name, wh
   "last round was partial" "$t17w7_undeliv_err"
 check_absent "EDMDS-T17 control -- never reaching the spec-sweep verdict the band exists to exercise" \
   "not converged (spec sweep):" "$t17w7_undeliv_res"
+
+# =================================================================================================
+# EDMDS-T39 (EDMDS-18 AC1/AC2/AC3, D83): three reserved follow-on prefixes are RELEASED
+# =================================================================================================
+# EDMV4 reserved four follow-on initiative prefixes, one per piece of work it deliberately left
+# undone. Three are now released: one named the completeness gap EDMDS-07's check (0) closed (D67),
+# and the other two named work no initiative has taken up since. The fourth stays reserved.
+#
+# What this band enforces is the CONSEQUENCE of a release, not the release itself. A released
+# prefix must survive nowhere in the shipped plugin, because a reader who greps one out of running
+# prose cannot tell a dead reservation from a live one -- the same discrimination failure
+# EDMDS-T16 avoided by giving check (0) its own message prefix instead of sharing the three
+# siblings' CA-471. A token that several distinct conditions share answers no question, and an
+# assertion keyed on one passes for the wrong reason.
+#
+# The authoritative record of which reservations are live is the owning initiative's decisions.md,
+# under the consuming repository's SRD tree. Nothing here reads that file, deliberately: it is
+# outside the plugin and its path carries an initiative name, which is CA-096 -- the defect that
+# killed four EDMV4 assertions outright the day that initiative was archived. This band asserts
+# only over the plugin's own tree, so it keeps working in any repository that installs the plugin.
+#
+# CC2: every prefix token below is assembled from two halves at run time, so this file -- which is
+# itself inside the tree being scanned -- never contains the literal it hunts for. Each released
+# prefix gets its OWN assertion, so a failure names which prefix survived rather than reporting
+# that "a released prefix" did.
+echo
+echo "=== EDMDS-T39: released follow-on prefixes are gone from the plugin tree, the retained one is not ==="
+
+# One scan function serves the real tree, the planted control tree and the retained-prefix check,
+# so all three answers come from the same code path and cannot diverge from one another.
+_t39_scan_tree() {
+  command grep -rn -- "$2" "$1" 2>/dev/null || true
+}
+
+t39_released_prefixes=()
+t39_half="CAM"; t39_released_prefixes+=("${t39_half}GAP")
+t39_half="LIN"; t39_released_prefixes+=("${t39_half}UXV")
+t39_half="EVA"; t39_released_prefixes+=("${t39_half}LB")
+t39_half="EDM"; t39_retained_prefix="${t39_half}RT"
+
+t39_ordinal=0
+for t39_needle in "${t39_released_prefixes[@]}"; do
+  t39_ordinal=$(( t39_ordinal + 1 ))
+  # AC2's control is PLANTED rather than hand-typed: a scratch tree holding one file that names the
+  # prefix exactly as a live reservation would, scanned by _t39_scan_tree against a root of its own.
+  # assert_tree_absent fails the whole assertion as "positive control broken" if that planted hit is
+  # not found, so a scan that has stopped matching anything at all cannot read as a clean tree.
+  t39_plant_root="${TMP}/t39-plant-${t39_ordinal}"
+  mkdir -p "$t39_plant_root"
+  printf 'reserved for a follow-on initiative: %s (planted control, EDMDS-T39)\n' \
+    "$t39_needle" > "${t39_plant_root}/reservation-note.md"
+  t39_real_hits="$(_t39_scan_tree "$PLUGIN_DIR" "$t39_needle")"
+  t39_planted_hits="$(_t39_scan_tree "$t39_plant_root" "$t39_needle")"
+  assert_tree_absent "EDMDS-T39 AC2 -- released prefix ${t39_needle} is referenced nowhere in the plugin tree (CLAUDE.md, README.md, docs/, bin/, bin/tests/ and every other shipped file beneath it)" \
+    "$t39_needle" "$t39_real_hits" "$t39_planted_hits" "$PLUGIN_DIR" "$t39_plant_root"
+  rm -rf "$t39_plant_root"
+done
+
+# AC3's over-sweep guard, and the live-tree control for the three assertions above it. The sweep
+# removes RELEASED names only; the fourth reservation is still live and must still be findable.
+# assert_tree_absent's own control is a synthetic haystack, which proves the MATCHER fires but says
+# nothing about whether the scan reached the plugin at all -- "no released prefix is here" and "I
+# searched nothing" both return zero, and a helper that answers the same way to both cannot serve
+# as a control. A real hit, from the real root, through the same function, separates them.
+t39_retained_hits="$(_t39_scan_tree "$PLUGIN_DIR" "$t39_retained_prefix")"
+t39_retained_count="$(printf '%s\n' "$t39_retained_hits" | count_matches_strict -- "$t39_retained_prefix")" \
+  || t39_retained_count="ERROR"
+if [[ "$t39_retained_count" == "ERROR" ]]; then
+  fail "EDMDS-T39 AC3 -- the scan errored looking for the retained prefix ${t39_retained_prefix}; the three absences above are unproven"
+elif [[ "${t39_retained_count:-0}" -ge 1 ]]; then
+  pass "EDMDS-T39 AC3 -- the retained prefix ${t39_retained_prefix} is still present (${t39_retained_count} reference(s)): the sweep took only released names, and the same scan demonstrably reaches the real tree"
+else
+  fail "EDMDS-T39 AC3 -- the retained prefix ${t39_retained_prefix} is referenced nowhere in the plugin tree: either the sweep over-reached and removed a live reservation, or the scan is not reaching the tree and the three absences above are vacuous"
+fi
+
+# AC1's in-tree half. A sweep that leaves a hole invites the next editor to fill it back in with the
+# name; the sentence recording that the reservation was RELEASED is what stops that, and nothing
+# fails when a comment goes stale, so the sentence is pinned here. Pinned by phrase, never by line
+# number (G10/CA-340), and the phrase carries no initiative name or artifact path (CA-096).
+t39_claude_md="$(cat "${PLUGIN_DIR}/CLAUDE.md")"
+t39_release_phrase="reservation is RELEASED"
+check "EDMDS-T39 AC1 -- the round-type documentation records the reservation as released instead of silently dropping the name" \
+  "$t39_release_phrase" "$t39_claude_md"
+t39_claude_md_control="$(printf '%s\n' "$t39_claude_md" | sed "s/${t39_release_phrase}//g")"
+check_absent "EDMDS-T39 AC1 control -- with that sentence stripped from a scratch copy, the same check does not fire: it pins real text rather than an always-true tautology" \
+  "$t39_release_phrase" "$t39_claude_md_control"
 
 
 # =================================================================================================
