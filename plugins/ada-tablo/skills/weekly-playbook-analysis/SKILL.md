@@ -249,6 +249,14 @@ Limit to top 3 recommendations unless more are critical.
 live backend data via MCP (`list_entities` for the playbook body, `get_ada_metric` /
 `get_conversations` for behavior) before it enters a recommendation.
 
+**Do not report a subagent's causal claim without spot-checking it.** When a subagent report says
+"X broke", "the migration caused Y", or anything else causal and specific, pull **3-4 of its own
+cited conversations** at full transcript detail and confirm the mechanism first. This is a standard
+step, not an optional one — it caught two separate overclaims in the 2026-09-14/15 AR-decline
+investigation, including a Haiku subagent reporting "the Aug 14 migration broke the Device Status
+action backend" when the real mechanism was client-side serial validation rejecting a legacy device
+ID format before Device Status was ever called.
+
 ## Step 9: Deploy Approved Edits via edit_agent_behavior
 
 Playbook edits are applied directly via MCP through `edit_agent_behavior`'s changeset model
@@ -389,6 +397,18 @@ skill: "commit-results", args: "playbook"
 
 Budget guidance: Allow 50-100 conversations via summaries, limit full transcripts to 5-10 per session.
 
+Match the read depth to the task shape:
+
+- **Large-N tallying** ("how many of these mention X", "bucket these by playbook") — Haiku subagents
+  on `detail_level="SUMMARY"` are fine; errors wash out in aggregate. Sanity-check the counts against
+  `get_ada_metric` / filtered volumes.
+- **Small-N causal attribution** ("why did these 15 escalate", "what is actually failing") — stronger
+  model (Sonnet or a forked session) and `FULL` detail, or the raw per-conversation export fields.
+  SUMMARY carries no `action_executed`/outcome entries, so it cannot separate "a validator rejected
+  the input" from "the backend call failed" — a causal story built on it is close to a guess. Read
+  fewer conversations at full detail rather than more at SUMMARY. Full-detail voice transcripts can
+  run several thousand tokens each.
+
 ## DO / DON'T
 
 **DO:**
@@ -396,6 +416,8 @@ Budget guidance: Allow 50-100 conversations via summaries, limit full transcript
 - Use `PLAYBOOKID` filters on `get_ada_metric` / `get_conversations` as the default data path
 - Compare metrics week-over-week
 - Pull full transcripts only for edge cases (max 3-5)
+- Pull full transcripts (not SUMMARY) whenever the deliverable is a causal claim, and use a stronger model than Haiku for that read
+- Spot-check 3-4 cited conversations at full detail before repeating any confident causal claim from a subagent
 - Pull the live playbook body via `list_entities` before proposing any edit
 - Run `/ada-tablo:config-health` on any playbook you're about to edit, before staging the edit
 - Run a test-run gate (Step 9b) on the changeset before promoting
@@ -408,6 +430,7 @@ Budget guidance: Allow 50-100 conversations via summaries, limit full transcript
 - Call `edit_agent_behavior` promote/revert/delete with `confirmed=true` without the user's explicit sign-off
 - Stage a playbook edit when config-health has an open P0 on that playbook
 - Promote a changeset without running its test-run gate
+- Build a root-cause claim on `SUMMARY`-level conversation data, or repeat a subagent's causal claim unverified
 - Analyze more than 100-150 conversations at once (diminishing returns)
 - Pull full transcripts for pattern discovery (use summaries or CSV reasons)
 - Expect immediate results — allow 7 days for changes to take effect

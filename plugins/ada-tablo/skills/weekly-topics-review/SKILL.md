@@ -145,6 +145,13 @@ If catch-all increased OR user wants pattern analysis:
    - Use sparingly: ~11k tokens per conversation
    - Get 2-3 representative conversations for pattern identification
 
+Catch-all pattern analysis is large-N tallying, so Options A and B (SUMMARY / script) are the right
+default — Haiku subagents on SUMMARY data are fine, and the counts should be sanity-checked against
+`get_ada_metric` volumes. The moment the question turns causal ("why did these escalate", "what is
+failing"), switch to Option C with a stronger model than Haiku and full transcripts: SUMMARY carries
+no action-level outcomes, so a root-cause claim built on it is close to a guess. And spot-check 3-4
+cited conversations at full detail before repeating any confident causal claim a subagent makes.
+
 ## Step 6: Generate Recommendations
 
 For any topic improvements identified, use this EXACT format:
