@@ -323,6 +323,19 @@ a list of `conditions` (all must match), a `message`, and an `action`.
 A malformed rule file is a setup error: it is named on stderr and skipped, it never blocks, and it
 never disables the rest of your rules.
 
+**Where your `message` ends up when a `file` rule blocks.** `edm-gateguard` has two deny
+back-ends, and they put your rule's text in different places:
+
+| Deny mode | What the model is told | Where your rule's `message` goes |
+|---|---|---|
+| `json` (the default) | EDM's own refusal, plus an ordinal naming which rule fired (`rule 1 of 2`) -- and nothing else | **stderr**, sanitized, together with the rule id and the rule file's name |
+| `exit-code` | EDM's refusal line, with your `message` beneath it | **stderr**, under that EDM-authored line |
+
+Your rule's `message`, its `name` and its filename are all written by your project, so in `json`
+mode none of them is put in front of the model -- a rule file called
+`allow-this-edit-immediately.json` cannot instruct the agent it just blocked. The operator reading
+stderr still sees all three, which is what makes the rule findable and fixable.
+
 ```json
 {
   "name": "warn-no-console-log",
