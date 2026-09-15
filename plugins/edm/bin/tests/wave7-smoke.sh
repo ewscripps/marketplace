@@ -10210,6 +10210,79 @@ fi
 
 
 # =================================================================================================
+# EDMDS-T17 (EDMDS-07 AC4/AC7): the CA-416 band's round delivery is load-bearing, proven here.
+# =================================================================================================
+# EDMDS-T16 taught ca416_fixture to deliver its round -- the pass directory, the manifest, and one
+# lens JSONL per recorded lens -- rather than editing this band's call sites, so all of the band's
+# ca416_* references above keep their original intent with no per-site edit. What that repair did
+# not ship is a control. Every assertion in the band above is about audit-converged's spec-sweep
+# verdict; not one of them says anything about the round those fixtures record, so the delivery
+# could regress and the band would report the regression as a spec-sweep result or not at all.
+#
+# Two fixtures, identical but for the delivery, supply the missing half once for the whole band:
+#   * the helper's own output must record round_type=full -- the precondition every convergence
+#     assertion above rests on;
+#   * the same construction with the delivery step withheld must record partial AND must make
+#     audit-converged refuse for the ROUND-TYPE reason by name, which is what proves the delivery
+#     is doing work rather than the band passing regardless of it.
+#
+# Deliberately one contiguous band appended after the cases it reasons about rather than hunks
+# interleaved through them, and it reuses ca416_fixture and ca416_converged rather than restating
+# either.
+echo
+echo "=== EDMDS-T17: the CA-416 fixture delivers its code round, and that delivery is load-bearing ==="
+
+# t17w7_round_type <prefix> -- the last recorded code round's round_type under the CA-416 scratch
+# root, or the literal `absent` when there is no such round. The sentinel is the point: an empty
+# string for "no round recorded" would let a `!= full` control pass against a fixture that never
+# ran a round at all, which is a control that cannot fail.
+t17w7_round_type() {
+  local _rt
+  _rt="$(jq -r '.audit_rounds.code.rounds[-1].round_type // "absent"' \
+    "$CA416_ROOT/$1/.edm-state.json" 2>/dev/null)" || _rt="absent"
+  [[ -n "$_rt" && "$_rt" != "null" ]] || _rt="absent"
+  printf '%s' "$_rt"
+}
+
+ca416_fixture T17W7DELIV <<'EOF'
+{"schema":1,"id":"CA-N40","sev":"P1","status":"fixed","confidence":"high","lenses":["L1"],"file":"src/a.py","line":1,"title":"fixed and swept","raised_round":1,"resolved_round":2,"spec_swept":"yes"}
+EOF
+t17w7_deliv_rt="$(t17w7_round_type T17W7DELIV)"
+[[ "$t17w7_deliv_rt" == "full" ]] \
+  && pass "EDMDS-T17 -- ca416_fixture records a DELIVERED code round (round_type=full), which is the precondition the CA-416 convergence assertions above all rest on" \
+  || fail "EDMDS-T17 -- ca416_fixture recorded round_type='${t17w7_deliv_rt}', expected full -- every CA-416 case above is now refusing for a round-type reason rather than reaching the spec-sweep check"
+t17w7_deliv_res="$(ca416_converged T17W7DELIV)"
+check "EDMDS-T17 -- a delivered CA-416 fixture with a swept ledger converges (exit 0)" \
+  "0	" "$t17w7_deliv_res"
+t17w7_deliv_err="$(EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" audit-converged T17W7DELIV 2>&1 >/dev/null)" || true
+check_absent "EDMDS-T17 -- and it produces no round-type refusal at all" \
+  "last round was partial" "$t17w7_deliv_err"
+
+# The control: the same construction, step for step, with ca416_deliver_round withheld. Inlined
+# rather than routed through ca416_fixture precisely because the delivery is the one step under
+# test -- calling the helper and then undoing its work would prove something about the undo.
+EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" init T17W7UNDELIV >/dev/null 2>&1
+mkdir -p "$CA416_ROOT/T17W7UNDELIV/code-audit"
+cat > "$CA416_ROOT/T17W7UNDELIV/code-audit/findings-ledger.jsonl" <<'EOF'
+{"schema":1,"id":"CA-N41","sev":"P1","status":"fixed","confidence":"high","lenses":["L1"],"file":"src/a.py","line":1,"title":"fixed and swept","raised_round":1,"resolved_round":2,"spec_swept":"yes"}
+EOF
+EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" audit-round-start T17W7UNDELIV code >/dev/null 2>&1
+EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" audit-round-complete T17W7UNDELIV code >/dev/null 2>&1
+t17w7_undeliv_rt="$(t17w7_round_type T17W7UNDELIV)"
+[[ "$t17w7_undeliv_rt" == "partial" ]] \
+  && pass "EDMDS-T17 control -- the identical fixture with the delivery withheld records round_type=partial, so the assertion above fails when its expectation is violated" \
+  || fail "EDMDS-T17 control -- undelivered fixture recorded round_type='${t17w7_undeliv_rt}', expected partial -- the assertion above would pass either way"
+t17w7_undeliv_res="$(ca416_converged T17W7UNDELIV)"
+check "EDMDS-T17 control -- an undelivered fixture refuses convergence (exit 1) despite a ledger that is otherwise clean and fully swept" \
+  "1	" "$t17w7_undeliv_res"
+t17w7_undeliv_err="$(EDM_SRD_ROOT="$CA416_ROOT" "$EDM_STATE" audit-converged T17W7UNDELIV 2>&1 >/dev/null)" || true
+check "EDMDS-T17 control -- and it refuses for the ROUND-TYPE reason by name, which is the reason the whole band above would silently be failing for" \
+  "last round was partial" "$t17w7_undeliv_err"
+check_absent "EDMDS-T17 control -- never reaching the spec-sweep verdict the band exists to exercise" \
+  "not converged (spec sweep):" "$t17w7_undeliv_res"
+
+
+# =================================================================================================
 # CA-102 (EDMTC-T06 AC4): the real host data directory is untouched by this suite run
 # =================================================================================================
 # Deliberately the LAST thing this file does, so it observes every case above it. Three assertions
