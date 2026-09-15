@@ -216,9 +216,9 @@ emit_decision() {
   # covering it rather than whichever line happens to be last.
   reason="$(sanitize_ascii "$reason")"
   untrusted_text="$(sanitize_ascii "$untrusted_text")"
-  # Until EDMDS-T07/T08 split the channels per deny mode, both halves travel the one channel each
-  # back-end already used, newline-joined only when BOTH are non-empty (nested `:+`, checked on the
-  # bash 3.2 floor) -- so a caller passing one half emits the bytes it did before this restructure.
+  # The exit-code arm still carries both halves on the one channel it always used, newline-joined
+  # only when BOTH are non-empty (nested `:+`, checked on the bash 3.2 floor) -- EDM's line first,
+  # the untrusted text beneath it. The json arm no longer reads this (EDMDS-T07, below).
   local deny_text="${reason}${reason:+${untrusted_text:+$'\n'}}${untrusted_text}"
   local mode="${EDM_GATEGUARD_DENY_MODE:-$EDM_GATEGUARD_DENY_MODE_DEFAULT}"
 
@@ -238,8 +238,13 @@ emit_decision() {
         json)
           # AC8: built with `jq -cn`, never string concatenation, so embedded quotes/backslashes/
           # newlines in the text are escaped correctly. `-c` (compact) matches AC2's single-line form.
-          jq -cn --arg deny_text "$deny_text" \
+          # EDMDS-T07/EDMDS-02 AC5: ONLY the EDM-authored half rides this model-facing channel.
+          # Every field of a matched hookify line is project-authored -- the `message`, the rule id
+          # built from the rule's own `name`, the rule file's own attacker-choosable filename -- so
+          # it goes to stderr, sanitized above, and the caller names the rule by ordinal instead.
+          jq -cn --arg deny_text "$reason" \
             '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":$deny_text}}'
+          [[ -z "$untrusted_text" ]] || printf '%s\n' "$untrusted_text" >&2
           exit 0
           ;;
         exit-code)
@@ -657,9 +662,12 @@ if command -v edm-hookify >/dev/null 2>&1; then
     # T44 AC4/AC5: hookify's block code becomes a refusal through THIS script's own emit_decision
     # (AD2); hookify's setup-error code never escalates (it already warned on stderr); a clean run
     # falls through unchanged. EDMDS-T06 AC1: every field of hookify's matched-rule line is project-
-    # or author-owned, so the whole line is the UNTRUSTED argument; the EDM-authored half stays empty
-    # here until EDMDS-T07 writes the ordinal naming which rule fired.
-    [[ "$GG_HOOKIFY_RC" -eq 2 ]] && emit_decision deny "" "$GG_HOOKIFY_OUT"
+    # or author-owned, so the whole line is the UNTRUSTED argument. EDMDS-T07/EDMDS-02 AC5: the
+    # EDM-authored half names which rule fired by ORDINAL. hookify prints one block line per match,
+    # so the match count is the line count -- taken by deleting every non-newline character, which
+    # spends no subprocess on this path and reads 1 for a single unterminated line.
+    GG_HOOKIFY_NLS="${GG_HOOKIFY_OUT//[!$'\n']/}"
+    [[ "$GG_HOOKIFY_RC" -eq 2 ]] && emit_decision deny "edm-gateguard: refused by project hookify rule 1 of $(( ${#GG_HOOKIFY_NLS} + 1 )). Each matched rule's own message is on stderr, unquoted here: rule text, rule ids and rule file names are all project-authored." "$GG_HOOKIFY_OUT"
   fi
 fi
 
