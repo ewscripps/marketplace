@@ -9,7 +9,8 @@ Analysis skills for the Tablo Ada chatbot support system. Used by David and Laur
 | `/ada-tablo:weekly-playbook-analysis` | Weekly (Fridays) | Playbook effectiveness review — CSV export, script analysis, baseline comparison, changeset-gated edits |
 | `/ada-tablo:weekly-topics-review` | Weekly (Fridays) | Catch-all reduction — topics report analysis, recommendation generation |
 | `/ada-tablo:coaching-review` | Monthly | Coaching inventory sync, resolution rate measurement, performance tracking |
-| `/ada-tablo:config-health` | Standalone / pre-cutover / pre-promote gate | Structural integrity check — orphan variable reads, unbound action outputs, dangling references, null conflation. Read-only. |
+| `/ada-tablo:config-health` | Standalone / pre-cutover / pre-promote gate | Structural and behavioural integrity check — orphan variable reads, unbound action outputs, dangling references, null conflation, plus how the playbook behaves on a call: destructive warnings delivered with their own trigger, consecutive sends with no ask on voice, fixed messages carrying multi-step instructions, unguarded tool failure paths. Read-only. |
+| `/ada-tablo:playbook-authoring` | On demand | Draft or revise a playbook against the measured authoring rules, voice first. Checks the draft with config-health, then hands a Step 9 payload to `weekly-playbook-analysis`. Never deploys. |
 | `/ada-tablo:deterministic-logic` | On demand | Move computable logic out of playbook prose into a code tool (sandboxed Python) or Answers Utility endpoint. Local case-table test, then changeset-gated deploy. |
 
 Two internal helper skills (`preflight`, `commit-results`) handle workspace setup and git operations automatically.
@@ -24,6 +25,11 @@ older `propose_change` tool has been retired and no longer exists on the live MC
 Before promoting any playbook edit, run `/ada-tablo:config-health` on the affected
 playbook(s) and a test run pinned to the changeset — see `weekly-playbook-analysis` Steps
 9a/9b.
+
+`/ada-tablo:playbook-authoring` sits upstream of all of this and has no write tools at all. It
+drafts and checks, then hands the edit to `weekly-playbook-analysis` Step 9. The rules it authors
+against live in the workspace repo at `reference/playbook_authoring_rules.md`, so they can be
+corrected without a plugin release.
 
 ## Architecture
 
