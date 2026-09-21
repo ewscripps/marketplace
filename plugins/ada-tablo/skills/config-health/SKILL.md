@@ -301,14 +301,32 @@ and hand off to a human agent automatically"*. Referencing it in a condition dis
 hands you the fallback path. So every `RUN` of a tool is a fork whether the author wrote one or
 not, and an unguarded one is a silent escalation nobody chose.
 
-Two sub-cases to report differently:
-- **The tool has a status output and the playbook ignores it.** `Tablo Device Issue & Replacement`
-  (`6a6a473a78f6ecdfd6ceee87`) runs three tools and never references `http_status_code`
-  (`6a6a46fa8d425159a6955e5f` is absent from its `referenced_variables`). Every API error there is
-  an automatic handoff.
-- **The tool has no status output configured at all.** On a code tool that means *"Let playbooks
-  branch when this tool fails"* was never enabled, so no guard is even possible. Report the tool,
-  not just the playbook.
+Two sub-cases, reported differently, because the fix lands in different places. Measured across
+all seven live playbooks on 2026-09-21: 21 of 32 action runs unguarded, 3 sub-case A, 18 sub-case B.
+
+- **A: the tool has a status output and the playbook ignores it.** Fixable by the playbook author.
+  `Tablo Device Issue & Replacement` (`6a6a473a78f6ecdfd6ceee87`) and `V2 Legacy Device Detection`
+  (`6a693f79cf457078e15fdccb`) both omit `6a6a46fa8d425159a6955e5f` from their
+  `referenced_variables` entirely.
+- **B: the tool has no status output at all**, so no guard is possible from any playbook. Only 1 of
+  16 tools on this instance exposes one. On a code tool this means *"Let playbooks branch when this
+  tool fails"* was never enabled. **Report the tool, not the playbook**, and say so plainly, or the
+  author will try to fix something they cannot reach.
+
+**Do not read "guards one tool" as "clean".** A playbook can guard its main lookup and still fire
+this check several times on sub-case B. FTS [Voice] `6a693fd47f29e2f8774514c3` guards its 404
+correctly and fires five times, which makes it the heaviest sub-case-B playbook on the instance,
+tied with FTS [Chat]. Count every `run`, not the notable one.
+
+**Also flag a guard that tests a single status code.** All three guarding playbooks test
+`is "404"` and nothing else. Because the variable is referenced, the automatic handoff is already
+disabled, so a 500, a 502 or a timeout falls through the `else` and is handled as though the device
+were found. Report it under this check as a narrow guard rather than a missing one. Arguably worse
+than no guard, and it belonged to none of these checks until 2026-09-21.
+
+Use `list_entities(entity_type="tools", detail="full")` to build the tool-to-status map, never
+`get_ada_configuration()`. Measured 2026-09-21: the configuration call returns 8 tools and the
+entity call returns 16, and the 8 it drops are the disabled ones. Same warning as Step 1.
 
 Not a P0: the auto-handoff is a defined behaviour and a customer reaches a person. It is a P1
 because nobody decided it.
