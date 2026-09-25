@@ -1,0 +1,10 @@
+# Git for Windows defaults to core.autocrlf=true. Without this, a Windows checkout
+# gets CRLF in the scripts and sources, which breaks shell scripts outright and makes
+# every rendered SVG look modified on checkout.
+* text=auto eol=lf
+*.py   text eol=lf
+*.sh   text eol=lf
+*.dot  text eol=lf
+*.svg  text eol=lf
+*.md   text eol=lf
+*.html text eol=lf
