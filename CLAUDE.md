@@ -71,6 +71,7 @@ Skills can call other skills via the `Skill` tool (e.g., `skill: "create-jira-ca
 - **bruno** (v1.1.0) — Bruno API client skills: scaffold and update collections, run collections with the bru CLI, document endpoints and environments, create new requests, and write or fix tests. Defaults to OpenCollection YAML format.
 - **web-cms** (v1.0.19) — Intake and execution skills for web CMS Jira workflows, plus specialist review agents (codebase-explorer, documentation-reviewer, implementation-reviewer, manual-qa-reviewer, plan-reviewer, review-analyst, test-reviewer, area-mapper, comment-reviewer, verification-runner) using the directory-per-agent layout.
 - **myday** (v1.0.0) — `/myday` skill: morning calendar/Jira briefing, mid-day check-ins, end-of-day reflection, team lookups, PTO tracking, meeting notes with 1:1 success-tracking, reminders, and review prep. Uses its own Atlassian MCP server config (same endpoint as jira plugin, declared independently so it works standalone). Bundles a starter `MyDay/` planner folder (ICS calendar fetch script) and a `myday-config.example.json` for personal config at `~/.claude/myday-config.json`.
+- **infra-docs** (v1.0.0) — Infra team: `/infra-docs:infra-docs` publishes and refreshes infrastructure docs in the Confluence `Infra` space (placement, house style, Graphviz diagrams, materiality-gated refresh). Its Write step calls the bundled `asd-ste100` skill, a vendored MIT copy of `danyuchn/asd-ste100-skill` — replace it from upstream rather than editing in place.
 
 ## Key Conventions
 
