@@ -18,7 +18,6 @@ AI coding assistants are powerful out of the box, but teams need consistent beha
 | ------ | ----------- |
 | [git](./plugins/git) | Git workflow plugin — conventional commits with Jira ticket scope, gitmoji, and Atlassian MCP integration |
 | [myday](./plugins/myday) | Daily planner — calendar + team Jira briefing, mid-day check-ins, end-of-day reflection, PTO tracking, meeting notes, reminders, and review prep |
-| [infra-docs](./plugins/infra-docs) | Infra team — publish and refresh infrastructure docs in the Confluence Infra space, with prose in ASD-STE100 Simplified Technical English (bundled `asd-ste100` skill) |
 
 ## Project Structure
 

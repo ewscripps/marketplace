@@ -2,7 +2,7 @@
     "name": "stg-marketplace",
     "metadata": {
         "description": "STG Coding plugins",
-        "version": "1.2.0"
+        "version": "1.1.0"
     },
     "owner": {
         "name": "STG Software Engineering Team",
@@ -153,16 +153,6 @@
                 "./agents/rn-jira-collector.md",
                 "./agents/rn-scm-collector.md",
                 "./agents/rn-confluence-publisher.md"
-            ]
-        },
-        {
-            "name": "infra-docs",
-            "source": "./plugins/infra-docs",
-            "description": "Infra team: publish and refresh infrastructure docs in the Confluence Infra space — page placement, house style, Graphviz diagrams, materiality-gated refresh — with prose written in ASD-STE100 Simplified Technical English (bundled asd-ste100 skill).",
-            "version": "1.0.0",
-            "skills": [
-                "./skills/infra-docs",
-                "./skills/asd-ste100"
             ]
         }
     ]
