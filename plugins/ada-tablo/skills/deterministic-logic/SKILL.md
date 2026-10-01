@@ -1,8 +1,8 @@
 ---
 name: deterministic-logic
-description: Move computable logic out of playbook prose and into a deterministic Ada tool — a code tool (sandboxed Python, the default) or an Answers Utility endpoint (evaljs JavaScript, the legacy path). Use whenever a playbook asks the reasoning engine to do something computable: validate or normalize a serial, compare version strings, classify a value into bands, do date math, count matches, check list membership. Also use when asked to build or fix a code tool, AU endpoint, evaljs action, or "ada/code" function. Writes via edit_agent_behavior changesets gated by config-health and a test run.
+description: Move computable logic out of playbook prose and into a deterministic Ada tool — a code tool (sandboxed Python, the default) or an Answers Utility endpoint (evaljs JavaScript, the legacy path). Use whenever a playbook asks the reasoning engine to do something computable: validate or normalize a serial, compare version strings, classify a value into bands, do date math, count matches, check list membership. Also use when asked to build or fix a code tool, AU endpoint, evaljs action, or "ada/code" function. Stages the tool on a changeset through edit_agent_behavior on the user's yes; the gates and the promote are weekly-playbook-analysis Step 9.
 user-invocable: true
-allowed-tools: Bash(node -e *), Bash(python3 *), Read, Grep, Glob, AskUserQuestion, Skill
+allowed-tools: Bash(node -e *), Bash(python3 - *), Read, Grep, Glob, AskUserQuestion, Skill
 ---
 
 # Deterministic Logic in Ada
@@ -150,8 +150,9 @@ assert isinstance(tree.body[-1], ast.Expr), 'must end on an expression'
 PY
 ```
 
-Then run every case and print a table. Do not proceed while any case raises or returns a key
-the declared outputs do not select.
+Then run every case and print a table, the same way: a `python3 - <<'PY'` script on stdin that
+holds the snippet and the cases. Do not proceed while any case raises or returns a key the
+declared outputs do not select.
 
 If porting existing logic between languages (JS ↔ Python), run both and assert the outputs are
 identical case-for-case rather than eyeballing them.
@@ -171,7 +172,8 @@ identical case-for-case rather than eyeballing them.
      changes=[{"entity_type": "code_tool", "change_type": "created", "fields": {...}}]
    )
    ```
-   Nothing is live — this lands on a TESTING changeset.
+   Nothing is live — this lands on a TESTING changeset. Stage only on the user's yes in the
+   moment (AskUserQuestion, with the payload shown); a stage never runs under standing approval.
 3. Verify the diff:
    ```
    list_agent_changesets(changeset_id="<id>", include_diff=true)
@@ -182,22 +184,17 @@ identical case-for-case rather than eyeballing them.
 Set `direct_use: false` unless the reasoner should be able to call the tool unprompted. A
 validator invoked by a playbook step does not need direct use.
 
-## Step 7: Gates — config-health, then a Test Run
+## Step 7: Gates: config-health on the staged body, then the Step 9 test gate
 
-**7a.** Invoke `/ada-tablo:config-health` scoped to the playbook that will call the tool.
-Resolve any P0 before promoting; never stage on top of a known P0.
+**7a.** Invoke `/ada-tablo:config-health --changeset <id>` scoped to the playbook that will call
+the tool, so it reads the staged body. Resolve any P0 before going
+further; never test or promote on top of a known P0.
 
-**7b.** `get_test_run_quota()`, then `get_test_cases()`, then create a run pinned to the
-changeset so it exercises staged config:
-
-```
-edit_agent_config(entity_type="test_run", operation="create",
-  fields={"test_case_ids": ["<id>", ...], "changeset_id": "<id>"})
-```
-
-Poll `get_test_runs(test_run_id="<id>")` until `completed`; any other terminal status blocks the
-promote. Do not use `simulate_conversation` to verify a changeset — it evaluates live baseline
-state and cannot pin to a changeset.
+**7b.** The test gate is `weekly-playbook-analysis` Step 9b, which runs `evidence-loop` step 6
+on this changeset: real failures as cases, failures first, 3 reps a case, `--changeset-only` for
+cases already measured on live. One test run is not evidence; the bench is non-deterministic.
+Do not use `simulate_conversation` to verify a changeset — it evaluates live baseline state and
+cannot pin to a changeset.
 
 **Test runs execute Actions live against production.** Check what the exercised playbook path
 calls before running.
@@ -231,18 +228,13 @@ drops the others from the edit.
 This response is large (hundreds of KB and up). Never read it into context; let it spill to a
 file and assert over it with a script.
 
-## Step 8: Confirm, Then Promote
+## Step 8: Hand Off to the Deploy Path
 
-Present the verified diff, the local test table, and the test-run result. Use
-`AskUserQuestion` with Confirm/Cancel. Only after explicit confirmation:
-
-```
-edit_agent_behavior(operation="promote", changeset_id="<id>", confirmed=true)
-```
-
-Echo back any `warnings_token` from the unconfirmed preview. Never confirm on the user's
-behalf. To walk back: `operation="remove"` (one entity), `"delete"` (whole changeset, still
-testing), `"revert"` (already promoted).
+This skill does not promote. Hand the changeset to `weekly-playbook-analysis` Step 9, starting
+at its step 4, with the verified diff, the local case table, the 7a config-health verdict, the
+7b gate verdict and a draft deploy note (why, source, expected effect; see `changeset-inspect`
+Deploy notes). Step 9 asks the user, writes the note on the yes, and promotes or starts a
+rollout. Run Step 7c's staleness check again immediately before that promote.
 
 ## Step 9: Verify It Actually Writes, Then Record It
 
@@ -304,8 +296,8 @@ Its `request_body` is only readable through the Ada REST API
 - Outputs' JMESPath `key` matches the returned dict keys exactly
 - Local case table green: happy path, malformed, empty, null, and the `NONE` fallback
 - Ported logic asserted identical against the original, case-for-case
-- `config-health` clean of P0; test run completed without regression
-- User explicitly confirmed the promote
+- `config-health --changeset` clean of P0; the Step 9 test gate GO at 3 reps a case
+- Handed to `weekly-playbook-analysis` Step 9; the user confirmed the promote there
 - `ISSET` count checked 24h after promote
 - Readable source and variable contract committed to `ada-tablo-ops/reference/`
 
@@ -341,6 +333,6 @@ Its `request_body` is only readable through the Ada REST API
 - Bare `import datetime`, or compare an aware datetime to a naive one
 - End a snippet on an assignment or on `None`
 - Ask the user to create a variable *after* staging an output bound to it
-- Promote without the config-health, test-run, and staleness gates, or without explicit confirmation
+- Promote from this skill. The promote is `weekly-playbook-analysis` Step 9, after the config-health, test and staleness gates and the user's explicit confirmation
 - Assume a changeset staged hours ago still matches live; re-read the diff or you may revert someone's work
 - Build a tool for a judgment call — that stays a prose `set`

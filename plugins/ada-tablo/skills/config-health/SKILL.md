@@ -1,7 +1,8 @@
 ---
 name: config-health
-description: Structural and behavioural integrity check for Ada-Tablo playbooks. Finds variables a playbook reads but nothing writes, action outputs that were never bound to a variable, dangling entity references, null-check conflation, cross-playbook variable contracts, and how the playbook behaves on a call: a destructive warning delivered in the same breath as the instruction that triggers it, consecutive sends with no ask on voice, fixed messages carrying multi-step manual instructions, unguarded tool failure paths, and steps that contradict the playbook's own general guidelines. Read-only. Run standalone before any cutover, or as a gate before promoting a playbook/coaching changeset.
+description: Structural and behavioural integrity check for Ada-Tablo playbooks. Finds variables a playbook reads but nothing writes, action outputs that were never bound to a variable, dangling entity references, null-check conflation, cross-playbook variable contracts, and how the playbook behaves on a call: a destructive warning delivered in the same breath as the instruction that triggers it, consecutive sends with no ask on voice, a physical step split into a send and a "say done" ask, fixed messages carrying multi-step manual instructions, unguarded tool failure paths, steps that contradict the playbook's own general guidelines, and on voice a send that repeats the automatic acknowledgement or an exit with no question. Read-only. Reads the live body by default, a TESTING changeset's staged body with --changeset, or a stage script's payload with --draft. Run standalone before any cutover, or as the gate on a staged playbook changeset before its test batch. Playbooks only; it has no coaching checks.
 user-invocable: true
+argument-hint: '[--changeset ID | --draft PATH] [PLAYBOOK_ID ...]'
 allowed-tools: Read, Grep, Glob, AskUserQuestion, Skill
 ---
 
@@ -57,9 +58,19 @@ list_entities(entity_type="handoffs", detail="minimal")
 list_entities(entity_type="playbooks", detail="full")
 ```
 
-`tools` full detail carries `inputs[]` and, critically, `outputs[]` — each output carries
-`key` (the field read from the API response), `save_as_variable`, `variable_name`, and
-`enabled` on the tool itself. `variables` full detail carries `scope` (needed by Step 4's
+`tools` full detail carries `inputs[]` and, critically, `outputs[]`, but the two tool types read
+differently (measured 2026-09-30):
+- **api tools**: take outputs from this bulk pull. Each output carries `key` (the field read from
+  the API response), `save_as_variable`, and `variable_name`, which holds the bound variable's id;
+  `enabled` is on the tool itself. A per-tool read of an api tool (`entity_id`) returns only id,
+  type and name, with no outputs (F387).
+- **code tools**: the bulk pull gives each output only its `name`, so every binding reads as
+  missing (F304). Read each code tool once with
+  `list_entities(entity_type="tools", entity_id="<tool_id>")`. There each output carries `key`,
+  `save_as_variable` and `variable.id`, the bound variable's id; `variable_name` is null. Do this
+  for every code tool, not only the ones in scope: the unbound-output check walks them all.
+
+Never fill a gap from `get_ada_configuration()`. `variables` full detail carries `scope` (needed by Step 4's
 meta/auto_capture check). `playbooks` full detail (bulk call, no `entity_id`) carries
 `is_active` for every playbook cheaply, without pulling full step trees — that's still done
 per-playbook in Step 3. `handoffs` has no fields these checks depend on, so minimal is enough
@@ -70,11 +81,30 @@ there.
 Ask the user (AskUserQuestion) which playbooks to check:
 - **All active playbooks** (default, recommended before any cutover or weekly run)
 - **A specific playbook or set** (e.g. the ones a pending recommendation touches — this is
-  the mode `weekly-playbook-analysis` Step 9a calls with)
+  the mode `weekly-playbook-analysis` Step 9 calls with)
 
 ## Step 3: Pull Full Playbook Bodies
 
-For each in-scope playbook:
+**Which body.** The check is only as good as the body it reads. Say which one in the report
+header.
+- **Live** (default, no flag): the body customers get today. Right for a standalone sweep or a
+  pre-cutover check. Wrong for a gate on a change: it checks the old body.
+- **`--changeset <ID>`**, a TESTING changeset: the body that will ship. Call
+  `list_agent_changesets(changeset_id="<ID>", include_diff=true)`; the response is large, so let
+  it spill to a file and read it with Read or Grep. For each playbook edit on it, take the
+  `after` value of every field in `diff.changed` and the live value (below) for every field the
+  edit does not change. A playbook the changeset creates is read from its `after` side alone.
+- **`--draft <PATH>`**, a stage script's payload before it is staged (the dry run writes it under
+  `~/.ada-evidence/tablo/sim/`, for example `voice_connectivity_stage_payload.json`): read the
+  file, take its fields as the draft, and the live value for anything it does not carry. A
+  draft that exists only in the conversation (a `playbook-authoring` build spec) is checked the
+  same way, from the steps as written, and the report says so.
+
+The gate on a change runs on the changeset or the draft, after staging or before it, and always
+before the test batch. Every caller uses that one place.
+
+For each in-scope playbook, pull the live body (the whole check for the live mode, the base for
+the other two):
 
 ```
 list_entities(entity_type="playbooks", entity_id="<playbook_id>")
@@ -88,8 +118,10 @@ It also returns three fields the behavioural checks depend on, all from this sam
 no extra requests:
 - `availability_rules` feeds the voice-reachable derivation in Step 4.
 - `general_instructions` is the behaviour contract every step inherits (P2 contradiction check).
-- `on_human_request` / `on_off_topic` / `on_off_script` say whether the playbook has a knowledge exit
-  or is a dead end.
+- `on_human_request` / `on_off_topic` / `on_off_script` say what the agent does when the customer
+  asks for a person, changes topic or asks a side question (rules A9). `search_knowledge` answers
+  the side question and resumes at the same step, so it is no exit from a gate; a gate's exit is
+  its own branch (rules R6).
 
 ## Step 4: Build the Write-Set and Read-Set (per playbook)
 
@@ -100,8 +132,9 @@ playbook, build two sets of variable IDs:
 - A `set` step targets it (`variable_id`), regardless of whether `value` is a literal, a
   `{{ variable:OTHER_ID }}` template, or null with `instruction` (LLM-derived).
 - An `ask` step targets it (`variable_id`).
-- It is the `variable_name` of an output (with `save_as_variable: true`) on an action that a
-  `run` step in this playbook invokes (`target_type: "action"`, `target_id` = the action).
+- It is bound to an output (with `save_as_variable: true`) on an action that a `run` step in this
+  playbook invokes (`target_type: "action"`, `target_id` = the action). The binding is
+  `variable_name` on an api tool and `variable.id` on a code tool (Step 1).
 - It is a meta/auto_capture-scope global (populated by the platform itself, not by any step —
   treat these as always-written; cross-check the variable's `scope` field from Step 1's
   `variables` list if uncertain).
@@ -111,12 +144,19 @@ playbook, build two sets of variable IDs:
 - It appears as `{{ variable:ID }}` inside any `instruction`, `message`, `exact_words`, or
   `set.value` string, anywhere in the playbook (including nested branches).
 
-**Voice-reachable** is a third derivation, used only by the behavioural checks. A playbook is
-voice-reachable when either:
-- its `availability_rules` contain a condition on the channel variable
-  `65eb4a21c9f9e85c0294ab92` with value `voice`; **or**
-- it has **no channel condition at all** (including no `availability_rules` key), which means it is
-  reachable on every channel with one set of copy.
+**Voice-reachable** is a third derivation, used only by the behavioural checks. Evaluate the
+`availability_rules` as though the channel variable `65eb4a21c9f9e85c0294ab92` were `voice`:
+- A channel condition is true or false on that value: `equals voice` is true and `equals chat` false;
+  `does_not_equal voice` is false and `does_not_equal email` true; any other operator is applied to
+  the string `voice`.
+- Every condition on another variable counts as possibly true.
+- Combine them through each group's `match` (`all` or `any`), nested groups included.
+
+The playbook is voice-reachable when the result can be true. That covers a rule with **no channel
+condition at all** (including no `availability_rules` key): it is reachable on every channel with
+one set of copy. Live examples, 2026-09-30: V2 Password Reset `6a693fd527809d4206fbbfa4` carries
+`channel does_not_equal "email"` and is voice-reachable; V2 CSAT Survey `6abb3301b2a454ca79c7aa42`
+carries `does_not_equal "voice"` and is not (F19).
 
 The second case is the one that bites. `[TEMP] Roku App Connectivity` was gated only on
 `own_tablo equals Yes`, so chat-shaped copy was spoken down the phone. Default to voice-reachable
@@ -155,8 +195,9 @@ a P0. If no writer exists anywhere in the active config, it is a P0.
 ### P0 — Unbound action output (the Device Status bug shape)
 
 Independent of any specific playbook, walk every action from Step 1's `list_entities(entity_type="tools", detail="full")` pull — including disabled ones (`enabled: false`); a dormant action can still carry this defect and gets referenced the moment someone re-enables it or a new playbook picks it up. For each output:
-- Flag if `save_as_variable: true` and `variable_name` is null, empty, or not a real variable
-  id from the Step 1 `variables` list.
+- Flag if `save_as_variable: true` and the binding (`variable_name` on an api tool, `variable.id`
+  from the per-tool read on a code tool, Step 1) is null, empty, or not a real variable id from the
+  Step 1 `variables` list.
 - Flag if `save_as_variable: false` but the output's `key` (e.g. `devices[0].registrationStatus`)
   looks like a field a playbook actually branches on — cross-check by searching all in-scope
   playbooks' read-sets and instruction text for a variable whose *name* plausibly matches the
@@ -234,9 +275,9 @@ writer somewhere in the playbook, just not before the read.
 Flag any run of **two or more `send` steps that execute in sequence with no `ask` between them**,
 on a playbook the Step 4 derivation marks voice-reachable.
 
-Walk it per execution path, not per node. Four rules make the difference between a useful finding
-and a noisy one. Each was got wrong once while building this check and corrected against
-the live FTS [Voice] body:
+Walk it per execution path, not per node. Five rules make the difference between a useful finding
+and a noisy one. Each was got wrong once while building this check or the stage scripts' counter,
+and corrected against an FTS [Voice] body:
 
 1. **Sibling `if_else` branches are alternatives, never a sequence.** Each branch inherits the run
    arriving at the conditional and produces its own continuation. Concatenating two branches into
@@ -245,9 +286,17 @@ the live FTS [Voice] body:
    between them. Scan the playbook as one sequence.
 3. **Report only maximal runs.** A path of three sends also contains two runs of two. Report the
    longest run per path and drop anything contained in it, or one defect reads as four findings.
-4. **`set` and `go_to` do not break a run**, because neither is spoken and neither waits. `ask` breaks it,
-   because that is the step that waits. `run` breaks it too, but a run of two or more sends
-   arriving at a `run` step is still reported: the caller heard both.
+4. **`set`, `go_to` and a `run` of a tool or a CSAT survey do not break a run**, because none of
+   them waits for the caller. The docs say the CSAT `RUN` "continues with the next step
+   immediately" and describe no `RUN` that waits (F329). A `run` of an exit or a handoff ends the
+   path. A `run` of a linked playbook breaks the run only if the child's first spoken step is an
+   `ask`. `ask` breaks it, because that is the step that waits, when it prompts: an ask on the
+   default `only_when_needed` can be answered silently from earlier in the conversation and never
+   be spoken (rules A5). Treat it as breaking the run, and let the next check flag it if it is a
+   physical step.
+5. **A path does not take a branch its own earlier branches rule out.** After a branch on
+   `connection is "ethernet"`, a later branch on `connection is "wifi"` cannot follow until a step
+   writes `connection` again. Counting both reports sends no caller hears on one call (F91).
 
 Why it is a defect: `SEND` never waits on any channel, `ASK` is the only step that waits, and the
 platform has no pause step. So a run of sends carrying instructions is a caller being read a script
@@ -266,6 +315,46 @@ steps each have an empty `else`, the structural maximum can exceed what a caller
 plausibly hears. Say both numbers rather than picking one. On FTS [Voice] the structural run is 4 and the real path
 is 3 (`I couldn't detect your Tablo online yet` → the on-screen-steps instruction → one of the
 Ethernet or Wi-Fi scripts), and it is the defect either way.
+
+### P1 — Physical step split into a send and a "done" ask, on a voice-reachable playbook (behavioural)
+
+The pattern rules R1 requires: one `ASK` per physical step, whose instruction gives the step and asks
+about what the caller will see when it is finished (the router's lights, the next app screen), with
+`when_to_ask: always`. Flag each of these, per step:
+
+1. **A `send` that asks the caller to perform a physical action, followed directly by an `ask`** (no
+   other spoken step between) that asks whether it is done. That is the old shape: the instruction and
+   the confirmation are two turns.
+2. **An `ask` whose question, `exact_words` or instruction asks the caller to say "done"**, or to
+   "let me know when you're done", without naming a result they will see. Search the text for
+   `done`, `finished`, `ready`, `let me know when`; a question that names a visible result ("tell me
+   when the light is solid blue") passes.
+3. **A physical-step `ask` on `when_to_ask: only_when_needed`** (the default, or null). An earlier
+   "done" or "yes" can answer it silently, so the caller is given the next step before acting on this
+   one.
+4. **A physical-step turn that asks for three or more actions.** Two small taps on one screen pass.
+5. **A physical-step `ask` whose instruction does not say what a re-ask asks**, or that allows a
+   generic one ("Would you like to continue").
+6. **A physical-step `ask` whose instruction does not say the first ask speaks the action.**
+   Contextual phrasing has dropped it and asked only the result question (F326).
+
+Also flag `general_instructions` that tell the agent to have the caller say "done". FTS [Voice] carried
+one until W35 removed it (promoted 2026-09-29); `stage_fts_voice_rewrite.py` now forbids it.
+
+Why it is a defect, measured on this instance (rules R1): on live FTS [Voice] after its 2026-09-23
+promotion, 32 of 34 "say done" asks were a separate line after the instruction, 10 of 34 got a clean
+"Done." first time and 11 got silence until Ada broke in with "Would you like to continue
+troubleshooting your Tablo connection?" (50 calls, 09-23..27). In `6ab41025e6801a02e618f3e8`, "say
+'done' once you've been through those steps" drew "Say that again.", then "Agent.". In W7 draft test
+runs 72 of 131 back-to-back Ada pairs were an instruction then a separate "Say 'done'" line. In 146 live voice calls, a cue naming the visible result was
+answered 7 of 7 times on restart steps, three or more actions in a turn went wrong 29% of 146 against
+15% of 249 for one or two, and step-specific re-prompts drew 0 non-replies of 17 against 3 of 20 for
+"Would you like to continue". There is no per-step wait on voice (rules A4), so this ask and its
+re-prompt are all that hold the flow while the caller acts. Ada's docs say nothing either way about
+confirming a physical step; the check rests on measurement.
+
+Report the step ids, the section title, which of the six it is, and the send and ask text
+verbatim. Do not draft the replacement; that is `playbook-authoring`'s job.
 
 ### P1 — Fixed `message` carrying multi-step manual instructions (behavioural)
 
@@ -324,8 +413,8 @@ disabled, so a 500, a 502 or a timeout falls through the `else` and is handled a
 were found. Report it under this check as a narrow guard rather than a missing one. Arguably worse
 than no guard, and it belonged to none of these checks until 2026-09-21.
 
-Use `list_entities(entity_type="tools", detail="full")` to build the tool-to-status map, never
-`get_ada_configuration()`. Measured 2026-09-21: the configuration call returns 8 tools and the
+Use `list_entities(entity_type="tools", detail="full")` for api tools and the per-tool read for
+code tools (Step 1) to build the tool-to-status map, never `get_ada_configuration()`. Measured 2026-09-21: the configuration call returns 8 tools and the
 entity call returns 16, and the 8 it drops are the disabled ones. Same warning as Step 1.
 
 Not a P0: the auto-handoff is a defined behaviour and a customer reaches a person. It is a P1
@@ -356,12 +445,33 @@ winner. Which one is correct is a product call.
 P2 rather than P1 because the reasoning engine usually resolves these in some direction rather than
 erroring, so the cost is inconsistency rather than breakage.
 
+### P2 - Voice acknowledgement repeated, or a voice exit with no question (behavioural)
+
+Rules R12, on a voice-reachable playbook. Flag each of these:
+
+1. **A `send` that only acknowledges.** Its whole text (fixed `message`, or an `instruction` that
+   tells the agent only to acknowledge, thank or confirm receipt) is an acknowledgement such as
+   "Great.", "Thanks.", "Got it." or "Perfect." The voice agent "automatically acknowledges end
+   user responses before and during Playbook execution", so the caller hears it twice. A send that
+   acknowledges and then gives information or covers a `run` passes; judge the send by what else it
+   says.
+2. **A path that ends the playbook with no question.** Walk every path to a `run` with
+   `target_type: "exit"` and to the end of the last section. Flag it when the last spoken step
+   before the end is a `send` that asks nothing. The docs say "End every Voice Playbook with a clear
+   question before exiting". A path that ends in a handoff passes: the caller is transferred, not
+   left.
+
+Report the step ids, the section title, the branch path and the text verbatim. P2, like R12: the
+cost is a repeated word or an abrupt end, and no measured failure on this instance sits behind it
+yet (F335).
+
 ## Step 6: Report
 
 Structure the output severity-first:
 
 ```
 ## Config Health Report — [scope] — [date]
+Body read: [live | changeset <ID> | draft <path or "in conversation">]
 
 ### P0 — Must fix before promoting anything on this playbook
 [entity, exact location, what's wrong, one-line why-it-matters]
@@ -380,7 +490,7 @@ Structure the output severity-first:
 **On any P0, refuse to recommend promotion of pending changes to the affected playbook(s)**
 until the user has either fixed it or explicitly acknowledged and accepted the risk.
 
-If invoked as a gate from another skill (e.g. `weekly-playbook-analysis` Step 9a), return
+If invoked as a gate from another skill (e.g. `weekly-playbook-analysis` Step 9, step 5), return
 this same structure to the caller rather than a conversational summary, so the P0 check can
 be enforced programmatically.
 
@@ -388,6 +498,8 @@ be enforced programmatically.
 
 - `list_entities(entity_type="tools"/"variables"/"playbooks", detail="full")`: bulk calls, ~1-5k tokens each, once per run — more than `detail="minimal"` would cost, but minimal detail lacks the `enabled`/`scope`/`is_active` fields these checks depend on
 - `list_entities(entity_type="handoffs", detail="minimal")`: ~200-500 tokens, once per run
+- `list_entities(entity_type="tools", entity_id=...)` per code tool: three on 2026-09-30, a few KB
+  each because the response carries the source code
 - `list_entities(entity_type="playbooks", entity_id=...)`: full body, roughly **8-20k tokens per
   playbook**. This is by far the expensive call; only pull playbooks actually in scope, one at a
   time. (An earlier note here said 1-3k. Measured 2026-09-21: `V2 NEW: Tablo 4th Gen First-Time

@@ -2,7 +2,7 @@
 name: coaching-review
 description: Run monthly coaching inventory review. Syncs with Ada MCP, tracks coaching effectiveness, guides new coaching implementation via edit_agent_behavior changesets.
 user-invocable: true
-allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(mkdir *), Bash(cp *), Bash(ls *), Read, Grep, Glob, AskUserQuestion, Skill
+allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/reconcile_coaching_ids.py), Bash(mkdir *), Bash(cp *), Bash(ls *), Read, Grep, Glob, AskUserQuestion, Skill
 ---
 
 # Coaching Management Review
@@ -80,10 +80,20 @@ Previous concerns: [any flagged items from last review]
 **IMPORTANT: MCP Capabilities & Limitations**
 
 **What MCP CAN do:**
-- `COACHINGAPPLIED` filter: Get resolution rates for specific coaching IDs
+- `COACHINGAPPLIED` filter: **the authoritative source for per-rule volume and AR.** Pass
+  `{"type": "COACHINGAPPLIED", "operator": "IS", "value": [coaching_id]}` to `get_ada_metric`
+  alongside `conversation_volume_engaged` and `resolution_rate`. Verified 2026-09-17 to
+  reproduce the Coaching screen's Conversations column exactly (7/7 rules matched on a
+  Jul 17–Sep 17 window). Any tool reporting coaching effectiveness should read from here.
+  Do **not** use the evidence-loop trend history for coaching volume or AR — its
+  `coaching_intent_outcome` counts did not reconcile with Ada on 2026-09-17 (one rule
+  reported at 33 firings/4wk against an actual 5/60d).
 - `search_coaching`: Find coaching IDs via semantic search (need IDs for filtering)
 - `get_ada_configuration`: Config snapshot — playbooks summary, web_actions, and custom_instructions (no coaching list)
-- `edit_agent_behavior(entity_type="coaching")`: Create/update/delete individual coaching on a changeset, then `promote` to go live (create: Step 6; delete: Step 3d). There is no dedicated "disable" operation — a deprecation is a `modified` or `deleted` change like any other.
+- `edit_agent_behavior(entity_type="coaching")`: Create/update/delete individual coaching on a changeset (create: Step 6; delete: Step 3d); `weekly-playbook-analysis` Step 9 gates and promotes it. To disable a rule without deleting it, use a `modified` change setting the `enabled` boolean
+  to `false` (`enabled` is an editable field on coaching — confirmed via `describe_entity` on
+  2026-09-17; an earlier note here wrongly said no disable path existed). `modified` is a partial
+  update, so any field left out inherits the live baseline.
 - `list_agent_changesets`: Review in-flight or already-promoted coaching changesets, including a per-field diff (`include_diff=true`)
 
 **What MCP CANNOT do:**
@@ -91,13 +101,43 @@ Previous concerns: [any flagged items from last review]
 - No way to list all coaching rules in one call — `list_entities` has no coaching entity type; Ada does not expose a full coaching list programmatically
 
 **Coaching ID Source:**
-`coaching_ids.md` is the canonical reference for tracked coaching IDs. Run the refresh script to update all known IDs in one pass:
+`coaching_ids.md` is the canonical reference for tracked coaching IDs. Its volume and ARR columns
+come from `pull_coaching_metrics.py`, which `evidence-loop` step 3b runs every week (7-day window)
+and which rewrites the file. That script refreshes every tracked ID but **does not discover new
+IDs**. If the file's `Last Updated` line is within 7 days, read the figures from it and do not
+pull again; otherwise refresh them first:
 ```bash
 python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py
 ```
-This updates volume + ARR for every tracked ID but **does not discover new IDs**. New coaching added in Ada must be manually appended to `coaching_ids.md` (see Step 6). A full browser-based re-scrape is needed periodically (~quarterly) to catch any missed IDs.
 
-**Option A: Manual UI Export (Recommended monthly)**
+**Discovery: finding rules the file does not track.** MCP cannot enumerate coaching
+(`list_entities` has no coaching type, `get_ada_configuration` excludes it, and
+`search_coaching` is semantic with a 20-result cap). As of 2026-09-15 the file tracked 98 rule
+IDs while 143 distinct coaching intents were firing live; the 2026-09-17 rebuild brought it to
+148. Use these, in this order:
+
+1. **`reconcile_coaching_ids.py`** seeds `search_coaching` with every known intent and reports
+   UNTRACKED rules (in Ada, missing from the file) and GHOST rules (in the file, not found):
+   ```bash
+   python3 ~/repos/ada-tablo-ops/scripts/reconcile_coaching_ids.py
+   ```
+   Read-only as run above. `--write` appends the UNTRACKED rows; it asks on stdin, so run it
+   only after the user says yes to the list, and verify a GHOST in the UI before pruning it. A
+   clean run means only that search reached nothing new; the file may still be incomplete.
+2. **The Audit Log API**, `GET /api/v2/analytics/audit-log/events/`, records coaching
+   `created` / `updated` / `deleted` with `entity_id`, `entity_name`, actor, timestamp and
+   `interface`, so it catches rules added in the Ada UI by anyone. 30 days per request; chain
+   windows if the last sync was longer ago. No script calls it yet; it is a read with
+   `ADA_API_TOKEN`.
+3. **A UI export** (below) is the only full enumeration. Use it when the counts from 1 and 2 do
+   not add up, or to rebuild the file.
+
+Append anything new to `coaching_ids.md` (see Step 6) and update its `Last Updated` line.
+The weekly contract check asserts this file has not drifted
+(`evidence-loop/tests/test_f_inventory_currency.py`); refreshing the inventory is what keeps it
+passing.
+
+**Full enumeration: UI export**
 
 Ask user to export from Ada UI:
 1. Go to: Settings > AI Agent > Coaching
@@ -121,7 +161,7 @@ If previous export exists, compare to identify:
 - Coaching removed/deleted
 - Usage changes (trending up/down)
 
-**Option B: MCP Quick Check (Between full syncs)**
+**Between syncs: MCP quick check**
 
 Use `get_ada_configuration` for a config snapshot:
 - Token cost: ~2-5k tokens
@@ -193,7 +233,7 @@ Use the `COACHINGAPPLIED` filter to measure actual effectiveness:
    ```
    search_coaching(query="power cycle instructions", limit=3)
    ```
-   Or run `pull_coaching_metrics.py` to refresh all known IDs at once (preferred for monthly review).
+   The weekly 7-day figures for every tracked ID are already in that file (Step 1); the call below is for a longer window or a single rule.
 
 2. **Check resolution rate** for conversations where coaching fired:
    ```
@@ -251,18 +291,16 @@ edit_agent_behavior(
   changes=[{"entity_type": "coaching", "change_type": "deleted", "entity_id": "<coaching_id>"}]
 )
 ```
-This stages the removal on a TESTING changeset — nothing changes live yet. Review the diff
-via `list_agent_changesets(changeset_id, include_diff=true)`, present Confirm/Cancel to the
-user, then:
-```
-edit_agent_behavior(operation="promote", changeset_id="<id>", confirmed=true, warnings_token="<token>")
-```
-omitting `warnings_token` if the preview did not return one. Only re-call with
-`confirmed=true` after explicit user confirmation. If deprecation should instead mean "keep
-but stop firing" rather
-than delete outright, discuss the intended end state with the user first — there is no
-separate disable flag; achieve it via a `modified` change to the coaching's availability
-rules, or via `deleted` if full removal is what's wanted.
+This stages the removal on a TESTING changeset — nothing changes live yet. Stage only on the
+user's yes in the moment. Then hand the changeset to `weekly-playbook-analysis` Step 9 from its
+step 4: it verifies the diff, runs the test gate (`evidence-loop` step 6, 3 reps a case), shows
+the user the draft deploy note (why, source, expected effect; see `changeset-inspect` Deploy
+notes), and promotes on the user's yes. `config-health` has no coaching checks, so for a coaching
+change the test gate is the only gate. This skill does not promote.
+
+If deprecation should instead mean "keep but stop firing" rather than delete outright, discuss
+the intended end state with the user first. Disable is a `modified` change setting `enabled` to
+`false` (see Step 1); `deleted` is for full removal.
 
 ### 3e: Classification Discipline
 
@@ -372,11 +410,7 @@ Most recommendations stem from a specific conversation. MCP creation requires an
    | reply | conversation_id, generative_actions_event_id, intent, text |
    | action / process / search_knowledge / handoff / playbook | conversation_id, generative_actions_event_id, intent, chosen_id |
 
-5. **Preview, then promote:** review the staged changeset (`list_agent_changesets(changeset_id, include_diff=true)`), present Confirm/Cancel to the user, then
-   ```
-   edit_agent_behavior(operation="promote", changeset_id="<id>", confirmed=true)
-   ```
-   echoing `warnings_token` if the preview carried one. Only call with `confirmed=true` after explicit user confirmation — never on the user's behalf.
+5. **Hand off to the deploy path:** stage only on the user's yes in the moment, then hand the changeset to `weekly-playbook-analysis` Step 9 from its step 4. It verifies the diff, runs the test gate (`evidence-loop` step 6, 3 reps a case; `config-health` has no coaching checks), shows the draft deploy note (why, source, expected effect; see `changeset-inspect` Deploy notes) and promotes on the user's yes. This skill does not promote.
 
 6. The promoted changeset's edit list carries the new coaching ID — use it for the coaching_ids.md append below (no fishing it out of the UI).
 
@@ -505,10 +539,10 @@ See Step 1 for capabilities. Key costs:
 - `get_conversation`: ~11k tokens — AVOID (ask user for permission if more context needed)
 
 **Strategy:**
-1. Monthly: Run `pull_coaching_metrics.py` to refresh all coaching IDs listed in `coaching_ids.md` at once
+1. Read the weekly figures `evidence-loop` step 3b wrote to `coaching_ids.md`; run `pull_coaching_metrics.py` only when they are more than 7 days old
 2. For any ID not in `coaching_ids.md`, use `search_coaching` as fallback
 3. Use `get_ada_metric` with `COACHINGAPPLIED` filter for individual spot-checks
-4. Request UI export for inventory counts and new coaching discovery (no API alternative)
+4. Discovery: `reconcile_coaching_ids.py` and the Audit Log API (Step 1); a UI export only for a full enumeration
 
 **CSV Management:**
 - Keep last 3 monthly exports for trend comparison
@@ -519,7 +553,7 @@ See Step 1 for capabilities. Key costs:
 
 **DO:**
 - Sync with Ada at start of every review
-- Run `pull_coaching_metrics.py` to refresh all coaching ID metrics before reviewing
+- Use the weekly figures in `coaching_ids.md` (evidence-loop step 3b), refreshing with `pull_coaching_metrics.py` only when they are more than 7 days old
 - Check resolution rates for high-impact coaching using `COACHINGAPPLIED` filter
 - Track owner (= creator) for accountability
 - Document the source analysis for each coaching recommendation
@@ -541,7 +575,7 @@ See Step 1 for capabilities. Key costs:
 ## Completion Checklist
 
 - [ ] Context loaded from inventory, history, AND coaching_ids.md (Step 0)
-- [ ] `pull_coaching_metrics.py` run to refresh coaching ID metrics (Step 1)
+- [ ] Coaching ID metrics no more than 7 days old, from step 3b or a fresh `pull_coaching_metrics.py` run (Step 1)
 - [ ] CSV exported or skipped (Step 1)
 - [ ] Inventory counts updated (Step 2)
 - [ ] Resolution rates checked for all high-impact items (Step 3)

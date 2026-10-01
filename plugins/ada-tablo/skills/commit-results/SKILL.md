@@ -7,7 +7,7 @@ allowed-tools: Bash(git *), AskUserQuestion, Read, Glob
 
 # Commit Ada-Tablo Results
 
-Stages, commits, and pushes analysis output and reference file updates to the shared workspace repo. Called by analysis skills after completing a run.
+Stages, commits, and pushes the run's output, reference updates and code changes to the shared workspace repo. Called by analysis skills after completing a run.
 
 **This skill is called by other ada-tablo skills. Do not run it directly.**
 
@@ -37,7 +37,19 @@ git -C ~/repos/ada-tablo-ops add path/to/specific/file.csv
 git -C ~/repos/ada-tablo-ops add path/to/specific/reference_file.md
 ```
 
-Only stage files in `output/` and `reference/` directories. If unexpected files appear in the status (e.g., `.env`, `.DS_Store`), do NOT stage them — mention them to the user.
+What may be staged:
+- `output/` and `reference/`: the run's results and reference updates.
+- Code and its tests and docs: `scripts/`, `evidence-loop/scripts/`, `evidence-loop/tests/`,
+  `evidence-loop/docs/`, `evidence-loop/ui/`. A script the run wrote or changed (a
+  `stage_*.py`, `changeset_inspect.py`, `loop_status.py`) is part of the result; leaving it out
+  means the commit records numbers the committed code cannot reproduce.
+
+Before staging, list every file you mean to stage, grouped by those two kinds, and ask the user
+with AskUserQuestion: stage all of them (Recommended), results only, or stop. Stage only what the
+answer covers.
+
+Never stage `.env`, `.DS_Store`, anything under `~/.ada-evidence/`, or any other path outside
+those directories. If one appears in the status, mention it to the user and leave it.
 
 ## Step 3: Commit
 
@@ -52,7 +64,9 @@ Examples:
 - `[topics] 2026-04-08 review`
 - `[coaching] 2026-04-08 review`
 
-Do NOT add AI attribution trailers (no `Co-Authored-By`, no `Generated-By`).
+End the message with the generated-by-Claude attribution footer the session's instructions give
+for commits (David's root CLAUDE.md requires it). Pass the message with one `-m` for the subject
+and one `-m` for the footer.
 
 ## Step 4: Sync Before Push
 
@@ -70,17 +84,24 @@ If rebase fails due to conflicts:
 
 ## Step 5: Push
 
+Check which branch is checked out:
+
+```bash
+git -C ~/repos/ada-tablo-ops branch --show-current
+```
+
 ```bash
 git -C ~/repos/ada-tablo-ops push
 ```
 
-If push fails after a successful rebase, inform the user and suggest checking their GitHub auth with `gh auth status`.
+This pushes the checked-out branch, nothing else. If push fails after a successful rebase, inform the user and suggest checking their GitHub auth with `gh auth status`.
 
-Confirm to the user: "Results committed and pushed to ada-tablo-ops. The other user will see these changes on their next run."
+Confirm to the user, naming the branch. On `main`: "Results committed and pushed to main. The other user will see these changes on their next run." On any other branch: "Results committed and pushed to <branch>. Lauren's preflight reads main, so she sees none of this until <branch> is merged to main." Do not merge; that is the user's call.
 
 ## Notes
 
 - All bash commands are separate calls (no `&&` chaining)
-- Never stage `.env`, `.DS_Store`, or files outside `output/` and `reference/`
-- Never add AI attribution trailers to commit messages
+- Never stage `.env`, `.DS_Store`, or files outside the directories Step 2 lists
+- End every commit message with the generated-by-Claude attribution footer
+- Say which branch was pushed; only `main` reaches the other user
 - Always pull --rebase before push to handle concurrent users

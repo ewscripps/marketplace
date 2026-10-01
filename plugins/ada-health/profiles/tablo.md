@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Instance | `nuvyyo-gr.ada.support` |
-| MCP server | `ada-tablo` (tool prefix `mcp__ada-tablo__`) |
+| MCP server | `ada-tablo` (tool prefix `mcp__ada-tablo__` where a project `.mcp.json` defines it, `mcp__plugin_ada-health_ada-tablo__` from this plugin; use whichever is connected) |
 | Token env var | `ADA_API_TOKEN` |
 | Dashboard | `https://nuvyyo-gr.ada.support` |
 | Conversation URL | `https://nuvyyo-gr.ada.support/insights/conversations/<id>` |
@@ -30,10 +30,12 @@ For this instance, prior-window self-comparison is the only safe baseline until 
 
 | Finding | Owner |
 |---|---|
-| A named playbook underperforming | `/ada-tablo:weekly-playbook-analysis` |
-| Catch-all or topic classification | `/ada-tablo:weekly-topics-review` |
-| Coaching effectiveness | `/ada-tablo:coaching-review` |
+| A named playbook underperforming | `/ada-tablo:evidence-loop --playbook <ID>` |
+| A topic moving | `/ada-tablo:evidence-loop --topic <ID>` |
+| Coaching effectiveness | `/ada-tablo:evidence-loop` step 3b (Ada's per-rule figures) |
+| A changeset promoted, rolled out or reverted in the window | `/ada-tablo:changeset-inspect` |
 | Suspected structural fault in a playbook | `/ada-tablo:config-health` |
+| A fix to deploy | `/ada-tablo:weekly-playbook-analysis` Step 9 (the deploy path) |
 
 ## Known instance quirks
 

@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Instance | `scripps.ada.support` |
-| MCP server | `ada-scripps` (tool prefix `mcp__ada-scripps__`) |
+| MCP server | `ada-scripps` (tool prefix `mcp__ada-scripps__` where a project `.mcp.json` defines it, `mcp__plugin_ada-health_ada-scripps__` from this plugin; use whichever is connected) |
 | Token env var | `SCRIPPS_ADA_API_TOKEN` |
 | Dashboard | `https://scripps.ada.support` |
 | Minimum-N floor | 20 (default — see Volume) |

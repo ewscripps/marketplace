@@ -90,23 +90,29 @@ Flag if:
 
 Catch-all % can be spot-checked any time via MCP — no CSV export needed. Useful mid-week to verify whether a deployed change is moving the number before Friday's full review.
 
-**Catch-all topic IDs (for TOPIC filters):**
+**There is no catch-all topic.** The V2 Topics & Intents cutover retired the legacy
+taxonomy; the live taxonomy is 16 topics, all `6a2702*`. A conversation Ada could not
+classify has an **empty `classifications` array**, not a membership in an "Other" topic.
 
-| Topic | ID |
-|-------|-----|
-| Unclear or Incomplete Inquiries | `67f95e779a99fb6bdfe534a8` |
-| Other Inquiries | `67fec3bbac473f6c4a232f93` |
+> Do NOT reintroduce a hardcoded catch-all topic ID here. This step previously
+> filtered on `67f95e779a99fb6bdfe534a8` and `67fec3bbac473f6c4a232f93`, both retired.
+> `get_ada_metric` returns `"0"` for a non-existent topic ID with **no error**, so the
+> catch-all trend line read a flat zero and nobody noticed. Any replacement must be
+> derived from the live taxonomy, never pasted from a previous run.
 
-1. **Filtered volume** (both catch-all topics):
-   ```
-   get_ada_metric(
-     metric_type="conversation_volume_engaged",
-     start_date="[start]", end_date="[end]",
-     filters=[{"type": "TOPIC", "operator": "IS", "value": ["67f95e779a99fb6bdfe534a8", "67fec3bbac473f6c4a232f93"]}]
-   )
-   ```
-2. **Total volume:** same call without filters
-3. **Catch-all % = filtered ÷ total**
+Catch-all is measured from the conversation export, not from a TOPIC filter:
+
+1. Run `analyze_catchall_conversations.py` against the window's export. It counts
+   engaged conversations whose `classifications` array is empty.
+2. **Catch-all % = empty-classification engaged ÷ total engaged.**
+3. Baseline for sanity: 28/2,925 engaged = 1.0% on the week of 2026-09-07.
+
+To confirm the taxonomy is live before trusting any topic number, list it rather than
+assuming it:
+
+```
+list_entities(entity_type="topics", detail="full")
+```
 
 This is a spot check only — the Friday review still uses the topics report CSV for the full per-topic breakdown.
 
@@ -121,34 +127,26 @@ Review Active Issues table from weekly_review_notes.md. For each tracked item:
 
 If catch-all increased OR user wants pattern analysis:
 
-1. **Option A: Pull catch-all conversation summaries via Ada MCP (default)**
-   - Token-efficient: ~100-200 tokens per conversation
-   - Filter directly to the two catch-all topics (IDs in Step 3b):
-   ```
-   get_conversations(
-     detail_level="SUMMARY",
-     start_date="[start]", end_date="[end]",
-     filters=[{"type": "TOPIC", "operator": "IS", "value": ["67f95e779a99fb6bdfe534a8", "67fec3bbac473f6c4a232f93"]}]
-   )
-   ```
-   - Identify patterns from the Inquiry Summary / Classification fields
-
-2. **Option B: Run catch-all analysis script (fallback for large samples)**
-   - Requires conversation export (not topics report)
-   - Identifies keyword patterns in catch-all conversations
-   - Use when the sample is too large to review via summaries
+1. **Option A: Run the catch-all analysis script (default)**
+   - Selects on an empty `classifications` array and reports the inquiry summaries
+     behind it, with keyword patterns
+   - There is no TOPIC filter that isolates catch-all (see Step 3b) — an unclassified
+     conversation has no topic to filter on, which is what makes it unclassified
+   - Requires a conversation export (not the topics report)
    ```bash
    python3 ~/repos/ada-tablo-ops/scripts/analyze_catchall_conversations.py [conversations.csv]
    ```
 
-3. **Option C: Sample specific conversations via MCP**
-   - Use sparingly: ~11k tokens per conversation
+2. **Option B: Sample specific conversations via MCP**
+   - Use sparingly: budget ~37k tokens per conversation, not the ~11k quoted
+     historically — a single measured payload was 147 KB, of which 95% was
+     `knowledge_referenced[].articles[].content` (full article bodies)
    - Get 2-3 representative conversations for pattern identification
 
-Catch-all pattern analysis is large-N tallying, so Options A and B (SUMMARY / script) are the right
+Catch-all pattern analysis is large-N tallying, so Option A (the script) is the right
 default — Haiku subagents on SUMMARY data are fine, and the counts should be sanity-checked against
 `get_ada_metric` volumes. The moment the question turns causal ("why did these escalate", "what is
-failing"), switch to Option C with a stronger model than Haiku and full transcripts: SUMMARY carries
+failing"), switch to Option B with a stronger model than Haiku and full transcripts: SUMMARY carries
 no action-level outcomes, so a root-cause claim built on it is close to a guess. And spot-check 3-4
 cited conversations at full detail before repeating any confident causal claim a subagent makes.
 
@@ -160,10 +158,11 @@ For any topic improvements identified, use this EXACT format:
 **Category name:** [verbatim from CSV]
 **Topic name:** [verbatim from CSV]
 **Topic ID:** [from list_entities(entity_type="topics") — needed for Step 6b]
-**Current description:** [copy from CSV or Ada UI]
-**Proposed description:**
-[Full text of new description, using the format:]
-Your task is to identify [X]. Apply when [specific scenarios]. Do not apply if [explicit exclusions].
+**Current scope:** [copy from list_entities(entity_type="topics", detail="full")]
+**Proposed scope:** [what this topic covers — the types of conversations it should match]
+**Proposed signals:** [keywords/phrases indicating a conversation belongs here]
+**Proposed excludes:** [keywords/phrases indicating it does NOT — including
+"use Category > Topic instead" redirects]
 **Rationale:** [why this change will help]
 ```
 
@@ -179,9 +178,16 @@ Limit to 2-3 recommendations unless more are critical.
 Topic descriptions are UI-only entities but are now writable directly via MCP — do NOT
 deliver paste-into-UI instructions as the default path.
 
+**A topic has no `description` field.** Verified against the live write schema on
+2026-09-15. The writable fields are exactly `name`, `scope`, `signals`, `excludes` and
+`intents` (the last is create-only — manage intents afterwards with
+`entity_type="intent"`). What the UI and the CSV label "Topic description" is **`scope`**,
+documented as "A description of what this topic covers — the types of conversations it
+should match." Everything Step 6 calls a description writes to `scope`.
+
 1. **Discover the update schema**, if unfamiliar:
    ```
-   edit_agent_config(entity_type="topic", operation="update")
+   edit_agent_config(entity_type="topic", operation="update", entity_id="<topic_id>")
    ```
    (call without `fields` to get the schema preview).
 
@@ -191,9 +197,12 @@ deliver paste-into-UI instructions as the default path.
      entity_type="topic",
      operation="update",
      entity_id="<topic_id>",
-     fields={"description": "<proposed description from Step 6>"}
+     fields={"scope": "<proposed description from Step 6>"}
    )
    ```
+   Put match keywords in `signals` and explicit exclusions in `excludes` rather than
+   folding them into `scope` prose — they are separate fields for a reason, and the
+   "Do not apply if ..." half of a Step 6 recommendation belongs in `excludes`.
 
 3. **Present the preview to the user** (use AskUserQuestion) — this entity type applies
    immediately on confirm, there is no TESTING changeset for topics.

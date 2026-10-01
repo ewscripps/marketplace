@@ -84,23 +84,27 @@
         {
             "name": "ada-tablo",
             "source": "./plugins/ada-tablo",
-            "description": "Ada chatbot analysis skills for Tablo support — playbook review, topics review, coaching inventory, config-health structural and behavioural integrity checks, playbook authoring, deterministic-logic tool authoring, and the evidence loop (weekly failure ranking with test-case verification of staged changes).",
-            "version": "2.4.0",
+            "description": "Ada skills for the Tablo support instance: the weekly evidence loop (whole-population failure ranking with test-case verification of staged changes), scoped work sessions (/work), on-demand changeset reads (/changeset-inspect), playbook authoring (voice first, never deploys), deterministic-logic tool authoring (code tools and Answers Utility endpoints), config-health integrity checks on a live, staged or draft body, the deploy path (weekly-playbook-analysis Step 9), and the older weekly playbook, topics and coaching reviews.",
+            "version": "2.7.1",
             "skills": [
+                "./skills/evidence-loop",
+                "./skills/work",
+                "./skills/changeset-inspect",
+                "./skills/playbook-authoring",
+                "./skills/deterministic-logic",
+                "./skills/config-health",
                 "./skills/weekly-playbook-analysis",
                 "./skills/weekly-topics-review",
                 "./skills/coaching-review",
-                "./skills/config-health",
-                "./skills/playbook-authoring",
-                "./skills/deterministic-logic",
-                "./skills/evidence-loop"
+                "./skills/preflight",
+                "./skills/commit-results"
             ]
         },
         {
             "name": "ada-health",
             "source": "./plugins/ada-health",
-            "description": "Instance-neutral health check for any Ada AI Agent deployment — recent config changes, action/API failures, handoff and repeat-contact movement, and automated resolution by channel. Read-only, two-tier, token-budgeted.",
-            "version": "1.0.0",
+            "description": "Instance-neutral health check for any Ada AI Agent deployment: recent config changes, action/API failures, handoff and repeat-contact movement, and automated resolution by channel. Read-only, two-tier, token-budgeted.",
+            "version": "1.1.0",
             "skills": [
                 "./skills/ada-health"
             ]

@@ -1,6 +1,6 @@
 ---
 name: ada-health
-description: Health check for an Ada AI Agent instance — surfaces recent config changes, action/API failures, handoff and repeat-contact movement, and automated resolution by channel over a short window. Read-only, everything via Ada MCP. Use when asked to check an Ada instance's health, whether anything recently broke or regressed, or to run a post-deployment or post-cutover check.
+description: Health check for an Ada AI Agent instance — surfaces recent config changes, action/API failures, handoff and repeat-contact movement, and automated resolution by channel over a short window. Read-only, everything via Ada MCP. Use when asked to check an Ada instance's health, whether anything recently broke or regressed, or for an instance-wide check after a cutover. For how one changeset is doing since it went live, use ada-tablo changeset-inspect instead.
 user-invocable: true
 argument-hint: '[instance] [--days N] [--ar-days N] [--ar-offset N] [--topics]'
 allowed-tools: Read, Grep, Glob, AskUserQuestion, Skill, Bash(mkdir -p *), Bash(cat *), Bash(ls *), Bash(python3 *ada-health/scripts/estimate_ar.py *), Bash(python3 *ada-health/scripts/coverage_curve.py *)
@@ -14,13 +14,13 @@ Two tiers. Tier 1 is a fixed cheap sweep of aggregate metrics — no per-convers
 
 ## Step -1: Pre-Flight
 
-Invoke `skill: "preflight"` if the `ada-tablo` plugin is enabled. It is not required — this skill has no dependency on the `ada-tablo-ops` repo. If preflight is unavailable, continue without it and say so once.
+Only for the Tablo instance, and only if the `ada-tablo` plugin is enabled: invoke `skill: "preflight"` (ada-tablo's; it checks the `ada-tablo-ops` clone and the Tablo token). For any other instance, skip it: this skill has no dependency on the `ada-tablo-ops` repo. If preflight is unavailable, continue without it and say so once. Resolve the instance (Step 0) first when the request does not name it.
 
 ## Step 0: Resolve instance, window, profile
 
 **Instance.** From the first argument, or from an explicit instance name in the user's request. If neither, list the profiles in the profile directory (see **Profile** below for its exact location) plus any Ada MCP servers visible in this session and ask via `AskUserQuestion`. Never guess — the wrong instance produces a confident report about the wrong AI agent.
 
-Set `SERVER` to that instance's MCP tool prefix (`mcp__ada-tablo__`, `mcp__ada-scripps__`). Every call below uses it. If the server is not connected, stop and say so — do not fall back to REST, curl, or a Python script. This skill is MCP-only by design.
+Set `SERVER` to that instance's MCP tool prefix. The same server can appear under two prefixes: the project-level server (`mcp__ada-tablo__`, `mcp__ada-scripps__`, present only where a project `.mcp.json` defines it, as in the Obsidian vault) and this plugin's own (`mcp__plugin_ada-health_ada-tablo__`, `mcp__plugin_ada-health_ada-scripps__`, present wherever the plugin is enabled). Use whichever of the two is connected in this session, the project one when both are. Every call below uses it. If the server is not connected, stop and say so — do not fall back to REST, curl, or a Python script. This skill is MCP-only by design.
 
 **Windows.** This skill runs **two different window pairs**, because the metrics divide into two classes with incompatible freshness requirements. Never use one pair for both.
 
@@ -239,7 +239,7 @@ Build an `AskUserQuestion` from **the flags that actually fired**, at most 4 opt
 | Step 4 or 3 flagged | `get_conversations(detail_level="SUMMARY", size=50, filters=[CHANNEL, ARSTATUS IS "Not Resolved"])`, read the classification reasons | ~8k |
 | Step 2 flagged | `list_agent_changesets(changeset_id=<id>, include_diff=true)` per flagged changeset | ~2-4k each |
 | `--topics`, or volume moved | per-topic `conversation_volume_engaged` fan-out over resolved topic IDs, then `get_conversations(SUMMARY, TOPIC, size=30)` on the top mover | ~1.5k + ~5k |
-| Coverage gate tripped and a number is needed before Ada catches up | `scripts/estimate_ar.py` — see below | ~2k in context |
+| Coverage gate tripped, a number is needed before Ada catches up, and `ANTHROPIC_API_KEY` is set | `scripts/estimate_ar.py` — see below | ~2k in context |
 | A structural fault is suspected | invoke `/ada-tablo:config-health` | varies |
 
 ### Estimating AR under a backlog
@@ -253,13 +253,15 @@ ADA_TOKEN=<instance token> ANTHROPIC_API_KEY=<key> \
     --channel <channel> --sample 25
 ```
 
+**It needs an Anthropic API key**, and exits with `ANTHROPIC_API_KEY not set` without one. The Tablo evidence-loop project has none (its model calls run through `claude -p` on a subscription), so on a machine with no key this row is not offered: say that waiting for the backlog is the only way to a number, and move on.
+
 It set-differences `IDS_ONLY` against both `ARSTATUS` filters to isolate unclassified conversations, samples them, scores each with Haiku against an approximation of Ada's rubric, and returns a point estimate with a Wilson 95% interval. Transcripts are fetched and scored inside the script and never enter context — only the aggregate comes back, so a 25-conversation run costs ~2k tokens here instead of ~275k.
 
 **Report the output as an estimate, always.** It approximates Ada's rubric rather than reproducing it, and Ada's own classifier is demonstrably inconsistent on near-identical conversations. Never write it into a baseline, never present it as AR, and never let it reach `/support-ratios` or `/monthly-deck`. Quote the interval, not just the point estimate — at n=25 the interval is wide, and that width is the honest part of the answer.
 
 Run **one** drill-down, report it, then ask again. Never chain two without a fresh prompt. Cap full transcripts at 3 per drill-down and state the cost before reading them.
 
-For a flagged playbook, topic, or coaching item, name it and hand off — `/ada-tablo:weekly-playbook-analysis`, `/ada-tablo:weekly-topics-review`, `/ada-tablo:coaching-review`. Do not re-analyze what those skills own.
+For a flagged item, name it and hand off to the owner the instance profile lists (**Hand-offs to other skills**). For Tablo: a flagged playbook, topic or coaching rule goes to `/ada-tablo:evidence-loop` in targeted mode (`--playbook`, `--topic`; coaching is its step 3b), a flagged changeset to `/ada-tablo:changeset-inspect`, and a suspected structural fault to `/ada-tablo:config-health`. Do not re-analyze what those skills own.
 
 ## Step 10: Persist the run
 
@@ -288,7 +290,8 @@ deliverable is a causal claim that will be reported and acted on, so:
 - Use a stronger model — Sonnet, or a forked session — not Haiku.
 - Read `detail_level="FULL"` / `get_conversation`, or pull the raw per-conversation export fields
   directly. **Not SUMMARY.**
-- Budget for it: ~11k tokens per chat transcript, and full-detail voice transcripts run several
+- Budget for it: 22k to 37k tokens per chat transcript (measured 2026-09; the ~11k quoted here
+  until 2026-09-21 was wrong), and full-detail voice transcripts run several
   thousand tokens each, sometimes far more. If the budget only covers SUMMARY, the honest move is to
   read fewer conversations at full detail, not more at SUMMARY.
 

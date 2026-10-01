@@ -1,6 +1,6 @@
 ---
 name: playbook-authoring
-description: Draft or revise an Ada playbook against the platform constraints and the measured authoring rules for this instance, voice first. Checks the draft with config-health, compares it to the strongest live performers, and hands a Step 9 payload to weekly-playbook-analysis. Never deploys anything.
+description: Draft or revise an Ada playbook against the platform constraints and the measured authoring rules for this instance, voice first. Checks the draft with config-health, compares it to the strongest live performers, reads real calls through the playbook before a rewrite, and hands a build spec to the stage route: a `scripts/stage_*.py` script for a `sections` edit, weekly-playbook-analysis Step 9 for any other field. Never deploys anything.
 user-invocable: true
 argument-hint: '[--new "goal"] [--edit PLAYBOOK_ID] [--review PLAYBOOK_ID]'
 allowed-tools: Read, Grep, Glob, AskUserQuestion, Skill
@@ -107,6 +107,15 @@ Name the failure this change is fixing, with one of:
 - A measured cluster from the evidence loop, with its window and denominator.
 - A `config-health` finding.
 
+**A rewrite or restage of a voice playbook also needs a read of real calls through it (F100).**
+20 to 50 live conversations that entered the playbook, read step by step: what the caller said at
+each ask, where they went silent, asked for a person or hung up. `/ada-tablo:work` runs it with
+`forensics_evidence.py` before handing off (F101); `evidence-loop` targeted mode can supply it; or
+read them here with `get_conversations` and `get_conversation`. Name which steps the read changed
+in the draft. A cluster or a `config-health` finding alone does not clear this gate for a rewrite,
+because the W2 FTS [Voice] rewrite was drafted without such a read and the first one (48 calls,
+2026-09-22) changed six steps of the staged payload.
+
 A playbook edit with no evidence behind it is a guess. That is allowed, but it has to be said out
 loud: report "no evidence behind this, proceeding on request" and let the user decide. Do not
 manufacture a justification, and do not treat a plausible story as a measurement.
@@ -120,9 +129,14 @@ Write sections, steps and the exact text of every message, instruction, `exact_w
 extraction instruction. Section B of the rules file is the checklist; the rules that catch the most
 real defects on this instance, in order:
 
-1. **R1, one action per turn.** A message that asks the customer to do something ends there. The
-   next step is an `ASK`. There is no pause step, so the `ASK` is the only thing that buys the
-   caller time.
+1. **R1, one turn per physical step.** The step is one `ASK` (`when_to_ask: always`, contextual)
+   that gives the instruction and asks about what the caller will see when it is finished: "unplug
+   the router, and tell me when its lights come back on." No `SEND` before it, and never ask the
+   caller to say "done". At most two small actions per turn; check in only where there is something
+   to see; the first ask always speaks the action (F326), and the re-prompt asks only about that
+   result, never "Would you like to continue". There is
+   no per-step wait on voice, so this ask and its re-prompt are all that hold the flow while the
+   caller acts.
 2. **R2, no manual instruction in a fixed `message`** on anything voice-reachable. Fixed text cannot
    be shortened for the channel. Use `instruction`.
 3. **R3, a destructive warning is its own step, before the instruction, with an `ASK` between.**
@@ -135,7 +149,13 @@ buzzwords, no em-dashes, no "it's not X, it's Y", no "Good news". Say why a step
 sentences. Numbers over adjectives. This applies to `message`, `instruction`, `exact_words` and
 anything else the customer hears or reads.
 
-Put behaviour in `general_instructions` once rather than repeating it in every step (R11).
+**Answer in the conversation, on every channel (David, 2026-09-24).** Ada gives the answer itself:
+the prices, the steps. No step sends a link, an `article_url` or a "see this article" line, and
+none points the customer somewhere else to find it. Chat is no exception.
+
+Put behaviour in `general_instructions` once rather than repeating it in every step (R11). On
+voice, no `SEND` that repeats the agent's automatic acknowledgement ("Great.", "Thanks."), and end
+every voice playbook on a clear question before the exit (R12).
 
 ## Step 5: Check
 
@@ -148,14 +168,16 @@ Then run the structural gate:
 skill: "config-health"
 ```
 
-Scope it to the playbook being changed. **Any P0 blocks the hand-off.** Surface it and resolve it,
+Scope it to the playbook being changed and point it at the draft (`--draft`, read from the steps as
+written in the build spec). Without that, config-health checks the live body, which says nothing
+about the draft. **Any P0 blocks the hand-off.** Surface it and resolve it,
 as its own change or folded into this one, before going further. A P1 does not block but must be
 reported with the draft so the person deciding sees it.
 
-`config-health` carries the five behavioural checks that come from this work: destructive warning
-colocated with its trigger (P0), consecutive `SEND` with no `ASK` (P1), fixed `message` carrying
-multi-step manual instructions (P1), unguarded tool failure path (P1), and step instruction
-contradicting general guidelines (P2).
+`config-health` carries the six behavioural checks that come from this work: destructive warning
+colocated with its trigger (P0), consecutive `SEND` with no `ASK` (P1), a physical step split into a
+`SEND` and a "done" ask (P1), fixed `message` carrying multi-step manual instructions (P1),
+unguarded tool failure path (P1), and step instruction contradicting general guidelines (P2).
 
 ## Step 6: Break It
 
@@ -182,16 +204,18 @@ For each one, say whether the draft handles it, and if not, either fix it or rec
 Three artifacts, in this order:
 
 **1. A build spec a person can read.** Sections, steps, the exact text, the routing, the
-availability rule, and what changed against the live body. `reference/combined-setup-connectivity-draft.md`
+availability rule, and what changed against the live body. `reference/fts-voice-rewrite-draft.md`
 is the shape to follow. Lead with the evidence and the prediction from Step 3.
 
-**2. The Step 9 payload.** `weekly-playbook-analysis` Step 9 puts this straight into
-`changes[].fields`, so it needs exact text, not a description:
+**2. The change record.** For an edit to any field except `sections`, `weekly-playbook-analysis`
+Step 9 puts the Edit line straight into `changes[].fields`, so it needs exact text, not a
+description. A `sections` edit cannot go that way (Step 8): its Edit line names the steps changed
+and points at the build spec, and the stage script builds the field.
 
 ```
 **Pattern:** [what was observed, with the evidence from Step 3]
 **Count:** [N conversations, X% of the denominator, window]
-**Edit:** [the exact field values, ready to stage]
+**Edit:** [the exact field values; for `sections`, the changed steps and the build spec]
 **Measurement:** [the prediction, and how to check it]
 ```
 
@@ -205,12 +229,21 @@ rather than fixed.
 
 ## Step 8: Hand Off, Then Stop
 
-Hand the Step 9 payload to `weekly-playbook-analysis` Step 9, which owns the deploy path:
-config-health gate, stage on a changeset, verify the diff, test run, the user confirms, promote.
+For any field except `sections`, hand the change record to `weekly-playbook-analysis` Step 9, which owns the deploy path:
+stage on a changeset, verify the diff, config-health on the staged body, the 3-rep test gate, the
+user confirms, then promote or roll out.
+
+**An edit to a playbook's `sections` field takes a different route.** `sections` is a whole-list
+field about 40KB wide, too large to go through a model tool call (F71), so Step 9 cannot stage it.
+It goes through a `scripts/stage_*.py` script in `~/repos/ada-tablo-ops/evidence-loop/`
+(`stage_fts_voice_rewrite.py` is the pattern), which builds the field from the live body and
+stages it on a TESTING changeset behind a fresh confirm token. Hand the build spec to that route;
+this skill does not write or run the script. A `work` session runs it on David's yes in the moment,
+and Step 9 takes over from the staged changeset.
 
 **Stop here.** Do not create a changeset. Do not stage. Do not promote. Do not call
 `edit_agent_behavior` or `edit_agent_config`. If the user asks this skill to deploy, tell them the
-deploy path is `weekly-playbook-analysis` Step 9 and hand them the payload.
+deploy path is `weekly-playbook-analysis` Step 9 and hand them the change record.
 
 ## Token Efficiency Notes
 
@@ -219,8 +252,8 @@ deploy path is `weekly-playbook-analysis` Step 9 and hand them the payload.
   one at a time; never pull all seven.
 - `~/repos/ada-tablo-ops/reference/playbook_authoring_rules.md`: about 4k tokens, once per run.
 - `get_improvement_guide()`: once per session, never twice.
-- No `get_conversation` calls. If a transcript is needed for the Step 3 evidence gate, the user or
-  `evidence-loop` supplies the finding; this skill does not read conversation data.
+- Conversation reads only for the Step 3 real-call read: at most 50 `get_conversation` calls a
+  session, none when `work` or `evidence-loop` already supplied the read.
 
 ## DO / DON'T
 
@@ -237,6 +270,7 @@ deploy path is `weekly-playbook-analysis` Step 9 and hand them the payload.
 - Deploy, stage, or create a changeset. That is Step 9's job and this skill has no write tools
 - Author from `notes/`, `workspace/`, or a snapshot
 - Put a manual instruction in a fixed `message` on anything voice-reachable
+- Ask a caller to say "done", or send an instruction and then ask separately whether it is done (R1)
 - Rely on an extraction instruction to rescue an overloaded turn (A11)
 - Write a channel branch inside a playbook. The channel variable is not safe as a step condition (A8)
 - Quote Ada's published voice numbers as a target. The denominators do not match (Section D)

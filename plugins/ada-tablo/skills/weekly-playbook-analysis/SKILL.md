@@ -1,8 +1,8 @@
 ---
 name: weekly-playbook-analysis
-description: Run weekly playbook analysis for Ada-Tablo. Pulls per-playbook metrics and failure patterns via Ada MCP, compares to baselines, deploys edits via edit_agent_behavior changesets gated by config-health and a test run.
+description: The deploy path for Ada-Tablo behavior changes (Step 9). Stages an edit on a changeset through edit_agent_behavior, or takes one a stage script staged, checks the staged diff, gates it with config-health on the staged body and evidence-loop's 3-rep test gate, writes the deploy note, then promotes or starts a rollout on the user's yes. Other skills hand off here to deploy. Steps 0 to 8 are the older per-playbook weekly metrics review; the Friday whole-population review is evidence-loop.
 user-invocable: true
-allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/scripts/analyze_playbook_failures.py *), Bash(mkdir *), Bash(cp *), Bash(ls *), Read, Grep, Glob, AskUserQuestion, Skill
+allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/scripts/analyze_playbook_failures.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py note *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(mkdir *), Bash(cp *), Bash(ls *), Read, Grep, Glob, AskUserQuestion, Skill
 ---
 
 # Weekly Playbook Analysis
@@ -259,17 +259,24 @@ ID format before Device Status was ever called.
 
 ## Step 9: Deploy Approved Edits via edit_agent_behavior
 
-Playbook edits are applied directly via MCP through `edit_agent_behavior`'s changeset model
-(the old `propose_change` tool no longer exists on the live server). Do NOT deliver
-paste-into-UI edit instructions.
+This step is the deploy path for the other skills: `playbook-authoring`, `deterministic-logic`,
+`coaching-review` and `evidence-loop` step 6d hand off here. It can run on its own ("Step 9
+only") on a change record or on a changeset that is already staged. Edits go live through
+`edit_agent_behavior`'s changeset model (the old `propose_change` tool no longer exists on the
+live server). Do NOT deliver paste-into-UI edit instructions.
 
-**9a. Gate: config-health check.** Before staging any edit, run (or invoke)
-`/ada-tablo:config-health` scoped to the playbook(s) being changed. If it reports any P0
-(orphan read, unbound action output, or dangling reference) on a playbook you are about to
-touch, surface it to the user and resolve it — as its own change or folded into this one —
-before proceeding. Do not stage an edit on top of a known P0.
+**Which route stages the edit.**
+- **Any field except a playbook's `sections`:** steps 1 to 3 below, through `edit_agent_behavior`.
+- **A playbook's `sections`:** a whole-list field about 40KB wide, too large to go through a
+  model tool call (F71), so steps 1 to 3 cannot stage it. A `scripts/stage_*.py` script in
+  `~/repos/ada-tablo-ops/evidence-loop/` stages it instead (`stage_fts_voice_rewrite.py` is the
+  pattern): it builds the field from the live body, writes the payload under
+  `~/.ada-evidence/tablo/sim/`, and stages it on a TESTING changeset behind a fresh confirm
+  token. The script runs from a `work` session on David's yes in the moment, never under
+  standing approval; this skill does not run it. Start at step 4 with the changeset id the
+  script printed.
 
-For each approved recommendation:
+For each approved change record:
 
 1. **Pull the live playbook body first:**
    ```
@@ -303,19 +310,33 @@ For each approved recommendation:
    recommendations for the same run can share one changeset (repeat step 3 with the same
    `changeset_id`).
 
-4. **Verify the staged diff before testing or promoting:**
+4. **Verify the staged diff:**
    ```
    list_agent_changesets(changeset_id="<id>", include_diff=true)
    ```
-   Confirm `diff.changed` shows exactly the intended field(s) changed and nothing else.
+   Confirm `diff.changed` shows exactly the intended field(s) changed and nothing else. For a
+   `sections` edit the response runs to hundreds of KB: let it spill to a file and compare it
+   with the stage script's payload file by script; never read it into context.
 
-5. **Gate: test run.** Before promoting, run the relevant test cases against this changeset —
-   see Step 9b below. Do not promote on a regression.
+5. **Gate: config-health on the staged body.** Run `/ada-tablo:config-health --changeset <id>`
+   scoped to the playbook(s) being changed, so it reads the body that will ship. A check on the
+   live body says nothing about the change. If it reports any P0 (orphan read, unbound action
+   output, dangling reference, destructive warning in the same turn as its trigger), surface it
+   and resolve it, as its own change or folded into this one, before going further. Do not test
+   or promote on top of a known P0.
 
-6. **Present the preview to the user** with Confirm/Cancel options (use AskUserQuestion) —
-   include the verified diff and the test-run result.
+6. **Gate: test runs.** Before promoting or rolling out, run the test gate in Step 9b. Do not
+   promote on a regression.
 
-7. **Only after explicit user confirmation**, promote:
+7. **Present the preview to the user** with Confirm/Cancel options (use AskUserQuestion) —
+   include the verified diff, the config-health verdict, the test-gate result, and the draft
+   deploy note (why, source, expected effect; see `changeset-inspect` Deploy notes). Say which
+   of the two ways in step 8 is being asked for.
+
+8. **Only after explicit user confirmation**, write the deploy note, then promote or roll out.
+   No note, no promote, and no note, no rollout.
+
+   **Promote** (live for every conversation):
    ```
    edit_agent_behavior(operation="promote", changeset_id="<id>", confirmed=true)
    ```
@@ -323,19 +344,43 @@ For each approved recommendation:
    back on the `confirmed=true` call — otherwise the tool re-issues the preview. Never confirm
    on the user's behalf.
 
+   **Roll out** (a sampled share of new conversations up to a hard cap; the changeset stays in
+   TESTING):
+   ```
+   edit_agent_behavior(operation="set_rollout", changeset_id="<id>", percentage=<1-100>, max_conversations=<cap>)
+   ```
+   `set_rollout` has no preview and no confirm step: sampling starts on the call. So the
+   AskUserQuestion in step 7 names the percentage and the cap, and the call is made only on
+   that yes. Percentages across all active rollouts on the instance sum to at most 100, and a
+   request over that is rejected. The rollout ends when `max_conversations` is reached; calling
+   `set_rollout` again resets the applied count to 0. Read progress with
+   `list_agent_changesets(changeset_id="<id>")` (`rollout.status`, `rollout.applied_count`,
+   `rollout.started_at`). To end it early, ask the same way, then
+   `edit_agent_behavior(operation="stop_rollout", changeset_id="<id>")`; conversations already
+   sampled keep the change until they end. Promoting the changeset after a rollout is its
+   own step 7 and 8.
+
 If the user wants to walk back an edit before promoting, use
 `edit_agent_behavior(operation="remove", changeset_id="<id>", entity_id="<entity_id>")`; to
 discard the whole changeset before it's live, use `operation="delete"` (same confirm flow as
 promote). A changeset already promoted can be walked back with `operation="revert"`.
 
-### Step 9b: Test-Run Gate
+### Step 9b: Test Gate
 
-Run this before every promote — do not promote on the strength of the preview diff alone.
+Run this before every promote or rollout — do not promote on the strength of the preview diff
+alone. One test run is not evidence: the bench is non-deterministic, so every case runs 3 times.
+
+**The gate is `evidence-loop` step 6.** Invoke `Skill: evidence-loop` in targeted mode for the
+changed playbook and run its step 6 on this changeset: real failures converted to cases, the
+failures-first batch, 3 reps, `--changeset-only` for cases already measured on live, the voice
+ceiling, and its GO / NO-GO bar. Bring its gate verdict and batch id back to step 7.
+
+**Only when `evidence-loop` is not installed**, run the same gate by hand:
 
 1. `get_test_run_quota()` — confirm headroom for the day before creating runs.
 2. Identify the test cases relevant to the changed playbook(s) via `get_test_cases()`.
-3. Create a test run pinned to the changeset so it exercises the staged (not yet live)
-   config:
+3. Create test runs pinned to the changeset so they exercise the staged (not yet live)
+   config, 3 runs per case:
    ```
    edit_agent_config(
      entity_type="test_run",
@@ -354,15 +399,18 @@ Run this before every promote — do not promote on the strength of the preview 
    criterion unrelated to the change under test is not necessarily a regression; a
    `did_pass: true` is not proof the change works if the criteria don't actually probe it.
 6. Block promotion on any real regression relative to the pre-edit baseline for that test
-   case. Surface the pass/fail delta (not just raw counts) to the user in the Step 9-6
-   preview.
+   case. Surface the pass/fail delta (not just raw counts) to the user in the step 7 preview.
 
 **Standing caveat:** Ada Simulations always execute Actions live against production —
 only Handoffs are mocked. There is no toggle to mock action calls; a field like
 `use_real_web_actions` on a test case is inert. Treat every test run as touching real
 downstream systems.
 
-After deploying, update the Changes Deployed tracking table.
+**Record it.** After a promote, the record is the deploy note and a ledger row, written only
+through `ledger.py register` or `ledger.py link`, with the prediction from the gate file (see the `work` skill, close step 1, for the exact commands; ask the user for a prediction when the gate has none, never write one yourself). A
+rollout has its deploy note and no ledger row until it is promoted. The Changes Deployed table
+in `playbook_baselines.md` is read only by Step 7; add a row there too only when Steps 0 to 8
+ran this session.
 
 ## Step 10: Offer Next Steps
 
@@ -419,17 +467,18 @@ Match the read depth to the task shape:
 - Pull full transcripts (not SUMMARY) whenever the deliverable is a causal claim, and use a stronger model than Haiku for that read
 - Spot-check 3-4 cited conversations at full detail before repeating any confident causal claim from a subagent
 - Pull the live playbook body via `list_entities` before proposing any edit
-- Run `/ada-tablo:config-health` on any playbook you're about to edit, before staging the edit
-- Run a test-run gate (Step 9b) on the changeset before promoting
+- Run `/ada-tablo:config-health --changeset <id>` on the staged body before the test gate
+- Run the Step 9b test gate (evidence-loop step 6, 3 reps) on the changeset before promoting or rolling out
+- Send a playbook `sections` edit through its `scripts/stage_*.py` script, never through `edit_agent_behavior` from this skill
 - Read test-run transcripts for anything unexpected, not just the pass/fail verdict
 - Get explicit user confirmation before calling `edit_agent_behavior` with `confirmed=true`
 - Classify outcomes by tool-call structure (which tools fired, in what order, with what status)
 - State the denominator — full population, or sample size and how it was drawn
 
 **DON'T:**
-- Call `edit_agent_behavior` promote/revert/delete with `confirmed=true` without the user's explicit sign-off
-- Stage a playbook edit when config-health has an open P0 on that playbook
-- Promote a changeset without running its test-run gate
+- Call `edit_agent_behavior` promote/revert/delete with `confirmed=true`, or `set_rollout`/`stop_rollout` at all, without the user's explicit sign-off in the moment
+- Test or promote a changeset while config-health has an open P0 on its staged body
+- Promote or roll out a changeset without its test gate or its deploy note
 - Build a root-cause claim on `SUMMARY`-level conversation data, or repeat a subagent's causal claim unverified
 - Analyze more than 100-150 conversations at once (diminishing returns)
 - Pull full transcripts for pattern discovery (use summaries or CSV reasons)
