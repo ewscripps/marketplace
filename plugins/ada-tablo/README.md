@@ -10,7 +10,7 @@ Analysis skills for the Tablo Ada chatbot support system. Used by David and Laur
 | `/ada-tablo:weekly-topics-review` | Weekly (Fridays) | Catch-all reduction — topics report analysis, recommendation generation |
 | `/ada-tablo:coaching-review` | Monthly | Coaching inventory sync and discovery of untracked rules, performance review on the weekly per-rule figures evidence-loop step 3b writes; coaching edits deploy through Step 9 |
 | `/ada-tablo:config-health` | Standalone / pre-cutover / gate on a staged changeset or draft | Structural and behavioural integrity check — orphan variable reads, unbound action outputs, dangling references, null conflation, plus how the playbook behaves on a call: destructive warnings delivered with their own trigger, consecutive sends with no ask on voice, fixed messages carrying multi-step instructions, unguarded tool failure paths. Reads the live body, a staged changeset (`--changeset`) or a draft (`--draft`). Playbooks only. Read-only. |
-| `/ada-tablo:playbook-authoring` | On demand | Draft or revise a playbook against the measured authoring rules, voice first. Checks the draft with config-health, then hands a change record to `weekly-playbook-analysis` Step 9, or for a `sections` edit a build spec to a `scripts/stage_*.py` script. Never deploys. |
+| `/ada-tablo:playbook-authoring` | On demand | Draft or revise a playbook against the measured authoring rules, voice first. Checks the draft with config-health, then hands a change record to `weekly-playbook-analysis` Step 9, or for a `sections` edit a build spec to a `scripts/stage_playbook.py` script. Never deploys. |
 | `/ada-tablo:deterministic-logic` | On demand | Move computable logic out of playbook prose into a code tool (sandboxed Python) or Answers Utility endpoint. Local case-table test, stage on a changeset, then the Step 9 gates and deploy. |
 | `/ada-tablo:evidence-loop` | Weekly (Fridays) | Whole-population failure ranking with 15 weeks of history, one targeted transcript read David approves, an approval gate with pre-registered predictions, and test-case verification of a staged changeset (3 reps, gate GO/NO-GO). Writes only test cases and test runs. |
 | `/ada-tablo:changeset-inspect` | On demand | Early read of a live changeset's before and after numbers for the playbooks, coaching rules and tools it touched, from Ada's own grading. Read-only on Ada. Never a verdict. |
@@ -33,10 +33,14 @@ conversations up to a cap and has no confirm step, so it is asked first like a p
 `/ada-tablo:playbook-authoring` sits upstream of all of this and has no write tools at all. It
 drafts and checks, then hands the edit to `weekly-playbook-analysis` Step 9. A playbook's
 `sections` field is too wide for a model tool call (F71), so a `sections` edit goes instead
-through a `scripts/stage_*.py` script in the workspace repo, run on the user's yes in the
+through a `scripts/stage_playbook.py` script in the workspace repo, run on the user's yes in the
 moment; Step 9 takes over from the staged changeset. The rules it authors
 against live in the workspace repo at `reference/playbook_authoring_rules.md`, so they can be
 corrected without a plugin release.
+
+The driver selects an `evidence-loop/scripts/payload_<EDIT>.py` builder; new `sections` edits
+add a builder registered in its `EDITS` tuple. Shared tree helpers live in
+`evidence-loop/scripts/playbook_flow.py`.
 
 ## Architecture
 

@@ -339,7 +339,7 @@ about what the caller will see when it is finished (the router's lights, the nex
    Contextual phrasing has dropped it and asked only the result question (F326).
 
 Also flag `general_instructions` that tell the agent to have the caller say "done". FTS [Voice] carried
-one until W35 removed it (promoted 2026-09-29); `stage_fts_voice_rewrite.py` now forbids it.
+one until W35 removed it (promoted 2026-09-29); `payload_fts_voice.py` now forbids it.
 
 Why it is a defect, measured on this instance (rules R1): on live FTS [Voice] after its 2026-09-23
 promotion, 32 of 34 "say done" asks were a separate line after the instruction, 10 of 34 got a clean

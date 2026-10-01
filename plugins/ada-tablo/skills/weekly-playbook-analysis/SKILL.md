@@ -268,9 +268,9 @@ live server). Do NOT deliver paste-into-UI edit instructions.
 **Which route stages the edit.**
 - **Any field except a playbook's `sections`:** steps 1 to 3 below, through `edit_agent_behavior`.
 - **A playbook's `sections`:** a whole-list field about 40KB wide, too large to go through a
-  model tool call (F71), so steps 1 to 3 cannot stage it. A `scripts/stage_*.py` script in
-  `~/repos/ada-tablo-ops/evidence-loop/` stages it instead (`stage_fts_voice_rewrite.py` is the
-  pattern): it builds the field from the live body, writes the payload under
+  model tool call (F71), so steps 1 to 3 cannot stage it. A `scripts/stage_playbook.py` script in
+  `~/repos/ada-tablo-ops/evidence-loop/` stages it instead, using the selected
+  `payload_<EDIT>.py` builder: it builds the field from the live body, writes the payload under
   `~/.ada-evidence/tablo/sim/`, and stages it on a TESTING changeset behind a fresh confirm
   token. The script runs from a `work` session on David's yes in the moment, never under
   standing approval; this skill does not run it. Start at step 4 with the changeset id the
@@ -469,7 +469,7 @@ Match the read depth to the task shape:
 - Pull the live playbook body via `list_entities` before proposing any edit
 - Run `/ada-tablo:config-health --changeset <id>` on the staged body before the test gate
 - Run the Step 9b test gate (evidence-loop step 6, 3 reps) on the changeset before promoting or rolling out
-- Send a playbook `sections` edit through its `scripts/stage_*.py` script, never through `edit_agent_behavior` from this skill
+- Send a playbook `sections` edit through its `scripts/stage_playbook.py` script, never through `edit_agent_behavior` from this skill
 - Read test-run transcripts for anything unexpected, not just the pass/fail verdict
 - Get explicit user confirmation before calling `edit_agent_behavior` with `confirmed=true`
 - Classify outcomes by tool-call structure (which tools fired, in what order, with what status)

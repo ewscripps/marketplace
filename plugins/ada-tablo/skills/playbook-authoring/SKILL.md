@@ -235,11 +235,13 @@ user confirms, then promote or roll out.
 
 **An edit to a playbook's `sections` field takes a different route.** `sections` is a whole-list
 field about 40KB wide, too large to go through a model tool call (F71), so Step 9 cannot stage it.
-It goes through a `scripts/stage_*.py` script in `~/repos/ada-tablo-ops/evidence-loop/`
-(`stage_fts_voice_rewrite.py` is the pattern), which builds the field from the live body and
+It goes through a `scripts/stage_playbook.py` script in `~/repos/ada-tablo-ops/evidence-loop/`
+with `EDIT` selecting a `payload_<EDIT>.py` builder, which builds the field from the live body and
 stages it on a TESTING changeset behind a fresh confirm token. Hand the build spec to that route;
 this skill does not write or run the script. A `work` session runs it on David's yes in the moment,
 and Step 9 takes over from the staged changeset.
+
+A new edit needs a `payload_<name>.py` builder registered in the driver's `EDITS` tuple.
 
 **Stop here.** Do not create a changeset. Do not stage. Do not promote. Do not call
 `edit_agent_behavior` or `edit_agent_config`. If the user asks this skill to deploy, tell them the

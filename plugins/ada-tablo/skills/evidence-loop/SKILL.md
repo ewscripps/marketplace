@@ -32,7 +32,7 @@ and test-run creation through `sim_harness.py`. When a person must decide it ret
 token. Batches of 100 runs or fewer (30 for a voice batch) start without asking (David,
 2026-09-15); larger batches and any test-case creation ask first. `sim_admin.py` deletes and this skill never calls it. Staging,
 promotion and rollouts each need David's yes in the moment and none runs from this skill: a stage
-is a `work` session's `scripts/stage_*.py` run, a promote or rollout is `weekly-playbook-analysis`
+is a `work` session's `scripts/stage_playbook.py` run, a promote or rollout is `weekly-playbook-analysis`
 Step 9.
 
 **Model calls** run through `claude -p` on David's subscription. There is no API key.

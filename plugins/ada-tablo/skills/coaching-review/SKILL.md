@@ -217,8 +217,6 @@ Save new CSV, keep previous for comparison.
 
 ## Step 3: Evaluate Existing Coaching Performance
 
-**This is the primary focus of the review.**
-
 ### 3a: Measure Resolution Rates (Primary Method)
 
 **Date Range Strategy:**

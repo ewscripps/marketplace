@@ -53,7 +53,7 @@ done-when, today's date. Then say two lines and nothing else:
   findings as numbered one-liners with verbatim text beside every ID. Report it to David in two
   sentences, never the transcript. **Re-resolve every Ada ID a sub-agent cites** before repeating
   or acting on it: run IDs and step IDs have been invented with the surrounding analysis correct.
-- **Ada writes from this skill: one kind only, a `scripts/stage_*.py` run.** Its allowed tools
+- **Ada writes from this skill: one kind only, a `scripts/stage_playbook.py` run.** Its allowed tools
   cover the evidence-loop scripts, and a playbook's `sections` edit is too wide for a model tool
   call (F71), so this skill runs the stage script: a dry run first, then the stage with the
   script's fresh confirm token, on David's yes in the moment, every time. It never runs under
@@ -61,6 +61,17 @@ done-when, today's date. Then say two lines and nothing else:
   its owner: test cases and test runs through `evidence-loop`; any other config change, every
   promote and every rollout through `weekly-playbook-analysis` Step 9. `sim_admin.py` deletes and
   needs David's yes in the moment too.
+  Run `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/stage_playbook.py EDIT [--variant V] [--changeset ID] [--confirm TOKEN]`.
+  `EDIT` is `fts_voice`, `voice_connectivity`, `presales_pricing`, `ldd_fourthgen_exit`,
+  `ldd_usersid_guard` (`--variant ldd` or `--variant connectivity`), `csat_happy_paths`
+  (`--variant fts` or `--variant conn`), or `password_reset`. Omit `--confirm` for the dry run;
+  it writes `~/.ada-evidence/tablo/sim/<name>_payload.json` and prints the token for the stage.
+  Each edit has an `evidence-loop/scripts/payload_<EDIT>.py` builder with constants `PLAYBOOK`,
+  `CHANGESET`, `PAYLOAD`, `BATCH`, `NOTE` and `build(live, client, variant)` returning
+  `(fields, errs, lines)`. A new `sections` edit needs a `payload_<name>.py` registered in the
+  driver's `EDITS` tuple. Shared tree helpers `index`, `clean`, `validate`, `flow_check` live in
+  `evidence-loop/scripts/playbook_flow.py`. The confirm flow, journal and TESTING landing stay
+  the same; `config-health --draft PATH` reads the dry-run payload.
 - **Verify before claiming.** Run the check the done-when names and read its output. One test run
   is not evidence; the bench is non-deterministic, so 3 reps.
 - **Test sizing.** Batches follow `evidence-loop` step 6b: failures first, `--changeset-only` for

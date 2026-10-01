@@ -41,7 +41,7 @@ What may be staged:
 - `output/` and `reference/`: the run's results and reference updates.
 - Code and its tests and docs: `scripts/`, `evidence-loop/scripts/`, `evidence-loop/tests/`,
   `evidence-loop/docs/`, `evidence-loop/ui/`. A script the run wrote or changed (a
-  `stage_*.py`, `changeset_inspect.py`, `loop_status.py`) is part of the result; leaving it out
+  `stage_playbook.py`, `payload_<edit>.py`, `playbook_flow.py`, `changeset_inspect.py`, `loop_status.py`) is part of the result; leaving it out
   means the commit records numbers the committed code cannot reproduce.
 
 Before staging, list every file you mean to stage, grouped by those two kinds, and ask the user
