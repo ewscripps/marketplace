@@ -254,7 +254,7 @@ approve"`. Then,
 per finding:
 
 ```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py decide --judgment <JSON> --finding <ID> --decision approved|rejected|deferred --note "<David's words>" --prediction '{"cluster_key":"<KEY>","metric":"pct","direction":"down","threshold":3.5,"horizon_weeks":4}'
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py decide --judgment <JSON> --finding <ID> --decision approved|rejected|deferred --note "<David's words>" --prediction '{"cluster_key":"<KEY>","metric":"pct","direction":"down","threshold":3.5,"horizon_weeks":1}'
 ```
 
 That call writes nothing; it prints the `on yes` command with a token. Run it verbatim. Approval
@@ -269,8 +269,8 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py import-approvals ~
 ```
 
 Say what would be recorded and what skipped and why, then run it without `--dry-run`. David's
-horizon is used as typed; if the tool says it may be too short to tell, say that in those words
-and leave it. A prediction in conversations rather than percent is refused; ask for a percent.
+horizon is used as typed, and a prediction with no horizon gets 1 week (David, 2026-10-02, W85); if
+the tool says it may be too short to tell, say that in those words and leave it. A prediction in conversations rather than percent is refused; ask for a percent.
 
 The import also records each decision as resolved conversations a week; `needs_resolved_a_week`
 lists any it could not translate. For each, ask David for the value with `AskUserQuestion` and
@@ -390,7 +390,7 @@ Ada runs about 10 at a time with the rest queued (F102), so 160 voice runs take 
 
 ```bash
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py compare --batch <BATCH> --wait
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py gate --batch <BATCH> --prediction '{"cluster_key":"<KEY>","metric":"pct","direction":"down","threshold":3.5,"horizon_weeks":4}'
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py gate --batch <BATCH> --prediction '{"cluster_key":"<KEY>","metric":"pct","direction":"down","threshold":3.5,"horizon_weeks":1}'
 ```
 
 The bar is per batch: GO when every case in this batch passes on every run, or when at least one
