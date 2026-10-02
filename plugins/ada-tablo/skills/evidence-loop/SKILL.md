@@ -81,7 +81,9 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py --no-close
 
 Say: last run date, how many clusters moved more than chance explains, which predictions are
 due this run and which would close and how, and what was promoted since last time. If the
-seasonal banner is set, say so. `--no-close` previews; step 5.7 closes.
+seasonal banner is set, say so. `--no-close` previews; step 5.7 closes. Also say the CHANGESET
+SCOREBOARD SUM line with its interval, and how many open decisions lack a resolved-a-week
+prediction.
 
 ## Step 2: This week's conversations
 
@@ -270,6 +272,10 @@ Say what would be recorded and what skipped and why, then run it without `--dry-
 horizon is used as typed; if the tool says it may be too short to tell, say that in those words
 and leave it. A prediction in conversations rather than percent is refused; ask for a percent.
 
+The import also records each decision as resolved conversations a week; `needs_resolved_a_week`
+lists any it could not translate. For each, ask David for the value with `AskUserQuestion` and
+record it with `ledger.py resolved <decision-id> --value N --source "<David's words>" --by david`.
+
 ## Step 5.7: Close what is due
 
 ```bash
@@ -326,6 +332,11 @@ David 2026-09-25); `brief_state.py` counts the hours to the window's last day, n
 
 The 72 hours governs early reads only. When a decision closes is the ledger's horizon and
 settling rule, unchanged.
+
+Scoreboard: report step 1's CHANGESET SCOREBOARD as printed, without recomputing it: each
+changeset's resolved conversations a week with its interval, the SUM line, the shared cells and the
+ledger line. Say "early read, not a verdict" and how many intervals exclude zero against the
+number expected by chance.
 
 ## Step 6: Prove it before it ships
 
