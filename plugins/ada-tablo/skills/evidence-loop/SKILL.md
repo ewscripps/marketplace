@@ -155,43 +155,62 @@ Zendesk, read-only, capped. Ask before raising `--max-gets`. To leave 4b out, as
 to read the notes. Say: how many sampled conversations became a ticket, and on how many a person
 wrote something.
 
-### Step 4c: One target, one question, read it
+### Step 4c: Up to three targets, one question each, read them
 
-The only step that asks David to decide mid-run. He approves the question once, for one target,
-and never approves answers one conversation at a time.
+The only step that asks David to decide mid-run. He approves one question per target, for up to
+3 targets, and never approves answers one conversation at a time. Targeted mode reads its one
+target the same way.
 
 ```bash
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py --artifact ~/.ada-evidence/tablo/triage_<MON>_<SUN>.json --run-date <TODAY>
 ```
 
-No Ada call and no model call; nothing is spent here. Say the shortlist in plain words: what each target is, how many conversations there are to read,
-which way it moved, and which one you recommend and why. Coaching targets rank on Ada's figures;
-say how many rules could not be matched to this week's conversations. Every target carries
-`reaches_gate`: stage 5 ranks only playbook failures, ended-unresolved reasons and playbook
-escalations, so a reading of a coaching, topic or intent target cannot be approved at step 5.5.
-Say which targets are like that before David picks; what such a reading shows is filed at step 8
-when it meets the findings rule. Then draft one question in
-David's terms, specific rather than broad ("did we ask for a serial when the problem was already
-obvious?" rather than "what went wrong?"), and let him replace it. One `AskUserQuestion` call
-covers both: the target, your recommended one first, and the question, your draft first; his own
-wording through "Other" is what goes into `--question`, verbatim. Before sending it: `loop_status.py wait 4c "Approve or replace the
-question"`.
+No Ada call and no model call; nothing is spent here. The first 3 on the shortlist
+(`read_at_4c: true`) are this week's reads; the rest are there to swap in. Say the shortlist in
+plain words: what each target is, how many conversations there are to read, and which way it
+moved. Topics, intents and playbooks rank on resolutions lost: this week's conversations times
+the drop from the 12 weeks before, with the 4-week figure, the range and how much of it is
+channel mix. Say the mix part: a drop that is mostly mix means more of the topic arrived by
+voice, where Ada resolves less, while each channel held its own rate. Coaching targets rank on
+Ada's figures; say how many rules could not be matched to this week's conversations. Every
+target carries `reaches_gate`: stage 5 ranks playbook failures and ended-unresolved reasons by
+count, gives a slot ahead of them to any playbook, reason, topic or intent target whose
+transcripts you read here, and scores playbook escalations separately, so only a reading of a
+coaching target cannot be approved at step 5.5. Say which targets are like that before David
+approves; what such a reading shows is filed at step 8 when it meets the findings rule. Nothing
+checks whether two of the 3 are the same conversations, such as a topic and one of its own
+intents.
+
+Then draft one question per target in David's terms, specific rather than broad ("did we ask
+for a serial when the problem was already obvious?" rather than "what went wrong?"). One
+`AskUserQuestion` call holds all of them, one question per target: the target in a line, your
+drafted question, and two options, approve the question (Recommended) and skip this target. His
+own wording through "Other" is what goes into `--question` for that target, verbatim. A skipped
+target is not read. Before sending it: `loop_status.py wait 4c "Approve or replace up to 3
+questions"`.
+
+Then read each approved target on its own, one after the other, with its own sheet, its own
+answer and its own recorded reading. Never pool two targets on one sheet. `<KEY>` is repeated
+for each of the target's cluster keys, as in its `read_it_with`.
 
 ```bash
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py --cluster-key "<KEY>" --window <MON> <SUN> --per-cluster 60
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py --cluster-review <SHEET> --question "<David's words, verbatim>"
 ```
 
-Groups of 20, each read separately, never combined. Say per group: the answer, then each
-statement with the conversations behind it, and how many statements are backed. A statement with
-no conversation is marked and not repeated. A cited conversation outside the cluster is a
-fabrication and taints the whole answer. A group that could not be read reports nothing.
+Groups of 20, each read separately, never combined. Say per target and per group: the answer,
+then each statement with the conversations behind it, and how many statements are backed. A
+statement with no conversation is marked and not repeated. A cited conversation outside the
+cluster is a fabrication and taints the whole answer. A group that could not be read reports
+nothing.
 
-Then read three or four cited conversations in full yourself and record what they showed. This
-is a gate, not a suggestion: the command refuses an id that is not in the cluster or has no
-transcript on disk; stage 5 prints NOT VERIFIED against every finding with no row, on both tables;
-stage 5.5 refuses to approve one and its refusal prints this command. Reject and defer work
-without it. A model may describe and cite; cause is yours to establish.
+Then, for each target, read three or four cited conversations in full yourself and record what
+they showed. This is a gate, not a suggestion: the command refuses an id that is not in the
+cluster or has no transcript on disk; stage 5 prints NOT VERIFIED against every finding with no
+row, on both tables; stage 5.5 refuses to approve one and its refusal prints this command.
+Reject and defer work without it. A model may describe and cite; cause is yours to establish.
+A reading is recorded against one cluster: the channel cluster the transcripts came from. Each
+recorded cluster is its own finding at step 5 and its own ledger row if David approves it.
 
 ```bash
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py --record-verification --cluster-key "<KEY>" --window <MON> <SUN> --conversation-ids <ID,ID,ID> --note "<what the transcripts showed>"
@@ -210,7 +229,7 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py --artifact
 ```
 
 Always pass `--artifact`. Two tables: at most five findings ranked by conversation count with
-movement as the tie-breaker, and
+movement as the tie-breaker, each cluster read at step 4c taking a slot ahead of them, and
 escalation findings scored against each channel's own handoff and resolution rate, ranked by how
 many times off its channel a playbook is. Above them, one line per channel (context, never a
 finding). Below them, where the handoffs sat by volume (where to work, never a ranking). Read
@@ -223,9 +242,9 @@ missing transcript read. No cause claim, no config proposal.
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py show --judgment <JUDGMENT JSON>
 ```
 
-`AskUserQuestion`, one question per finding from both tables, 4 findings a call and several calls
-when there are more: the finding in one or two lines, and approve, reject and defer as options
-with the one you recommend first and why. For a recommended approve, that option carries your
+`AskUserQuestion`, one question per finding from both tables, every target read at step 4c
+among them, 4 findings a call and several calls when there are more: the finding in one or two
+lines, and approve, reject and defer as options with the one you recommend first and why. For a recommended approve, that option carries your
 drafted prediction: which way, to what number, in how many weeks. His free-text answer through
 "Other", a prediction number included, is what gets recorded in `--note`, verbatim. Before the
 first call: `loop_status.py wait 5.5 "Decide every finding, with a prediction for each

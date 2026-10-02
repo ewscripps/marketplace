@@ -57,8 +57,8 @@ out. `--llm-label` still exists and still scores, but it is a measurement tool, 
 run; do not offer it as a labeller.
 
 Model calls are spent on what code cannot see (a missing flow, a wrong route, wording) and that is
-step 4c: pick one target, sharpen one question, read that cluster. Stage 3 describes and points;
-it does not decide what is a defect.
+step 4c: up to 3 targets, one sharpened question each, each read on its own. Stage 3 describes
+and points; it does not decide what is a defect.
 
 Scoring the code rule against a sheet David has filled in:
 
@@ -83,8 +83,15 @@ so names can survive.
 **Why the question is David's.** "What went wrong here?" is the open-ended ask that was measured
 and abandoned: it produced over-calling (57 defect calls against 26 real ones) and, on one
 cluster, five invented conversation ids. A specific question written by the person who knows the
-product is what the reading is for. He approves the question, once; that is what keeps it worth
-his time as the volume grows.
+product is what the reading is for. He approves each question, once; that is what keeps it
+worth his time as the volume grows.
+
+**Why three targets (W80, 2026-10-02).** With one target a run, the 2026-10-02 run read Legacy
+Device Detection on voice, whose decision was flagged underpowered with a pre-trend of -1.71
+points a week, and the one-of-each-kind shortlist left Antenna & Channels (7.7 resolutions lost)
+out because Legacy & Migration (7.8) held the one topic slot. The three reads are now the three
+largest losses whatever their kind. Each is read and recorded on its own, so each reaches the
+gate and the ledger on its own.
 
 **Coaching targets** are ranked by Ada's own figures, not this week's pull (see step 3b). A rule
 that cannot be matched to this week's conversations is listed, never dropped; it is usually a
