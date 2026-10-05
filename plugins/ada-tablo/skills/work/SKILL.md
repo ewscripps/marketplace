@@ -97,6 +97,12 @@ in the worker's report and goes nowhere. Every finding is one line carrying: the
 correct looks like, and a priority P0 to P3 by the definitions in TODO under Priority levels, as
 `(open, P2)`. Enough that a reader can act without re-reading the transcript.
 
+Before writing the line, run `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py --line "<the line>"`
+as its own call and read what it lists: open and closed findings that share an entity with it
+(directly or through a conversation or test run it cites) or 3 or more IDs. When one already says
+it, add the evidence to that line (an open one) or name it in the new line (a closed one) rather
+than filing the same thing under a new number.
+
 The ID is the next one, one past the highest in FINDINGS or `notes/FINDINGS-closed.md`. A P0 or P1
 line goes at the bottom of the P0 and P1 section of FINDINGS, a P2 or P3 line at the bottom of
 Open. A P0 is also said to David in one line. A finding a W item owns carries `(work: W#)` with no

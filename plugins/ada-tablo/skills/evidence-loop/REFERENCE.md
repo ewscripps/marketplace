@@ -45,7 +45,7 @@ a rule that fired zero times shows as zero instead of vanishing. Two things stil
   conclusion; stage 5 cannot rank a coaching cluster (FINDINGS F02). No coaching edit is
   proposed from this skill.
 
-## Step 4: which labeller counts
+## Step 4d: which labeller counts
 
 The code rule is the labeller of record: if Ada sent the identical message twice in a row, that
 is a defect. It is six lines of Python and no model call. Scored against David's own labels on 74
@@ -57,7 +57,7 @@ out. `--llm-label` still exists and still scores, but it is a measurement tool, 
 run; do not offer it as a labeller.
 
 Model calls are spent on what code cannot see (a missing flow, a wrong route, wording) and that is
-step 4c: up to 3 targets, one sharpened question each, each read on its own. Stage 3 describes
+steps 4c and 4d: up to 3 targets, one sharpened question each, each read on its own. Stage 3 describes
 and points; it does not decide what is a defect.
 
 Scoring the code rule against a sheet David has filled in:
@@ -71,7 +71,7 @@ Pooling a `customer_text` cohort that stage 2 keys per channel:
 "customer_text|chat|outcome=not_resolved|term=roku"`. Each key is matched exactly; a typo raises
 with the near-miss keys for that one key.
 
-## Step 4b
+## Step 4d: what the human agent did next
 
 Zendesk carries no call recordings text, so on voice the human-side record is the agent's
 internal note after the call. About 5 fetches go into each conversation, which is why

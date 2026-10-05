@@ -3,7 +3,7 @@ name: evidence-loop
 description: Weekly evidence loop for the Tablo Ada instance. Shows where Ada got worse this week from the whole conversation population, turns real failed conversations into Ada test cases, and checks a staged change against them before a person promotes it. Read-heavy; every write to Ada sits behind an explicit approval. Use for the Friday review, or mid-week with a cluster, playbook or topic to chase one thing.
 user-invocable: true
 argument-hint: '[--window START END | --cluster KEY | --playbook ID | --topic ID] [--no-pull]'
-allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(ls *), Bash(mkdir -p *), Read, Grep, Glob, Edit(/Users/181085/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md), AskUserQuestion, Skill
+allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(ls *), Bash(mkdir -p *), Read, Grep, Glob, Edit(/Users/181085/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md), AskUserQuestion, Skill
 ---
 
 # Ada Evidence Loop (Tablo)
@@ -39,11 +39,19 @@ Step 9.
 
 **Status page.** `loop_status.py` keeps a browser page in step with the run so David can see the
 phase without reading the output. Step 0 starts it. At the start of every step, before its first
-command, run `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py step <ID>` (IDs: 0 1 2 3 3b 4 4b 4c 5 5.5 5.6 5.7 5.8 5.9 6 6a 6b 6c 6d 7 8).
+command, run `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py step <ID>` (IDs: 0 1 2 3 3b 4c 4d 5 5.5 5.6 5.7 5.8 5.9 6 6a 6b 6c 6d 7 8).
 Just before any question to David, run `loop_status.py wait <ID> "<the ask in a few plain
-words>"`, then ask it with `AskUserQuestion`; the next `step` clears it. After a step's result, `loop_status.py note <ID> "<one-line
-result>"` is optional (a gate verdict, a batch size). These calls never block the run: if one
-fails, say so in one line and carry on. The server stays up until it is stopped; step 0 restarts
+words>"`, then ask it with `AskUserQuestion`; the next `step` clears it. The project's
+`AskUserQuestion` hook (`loop_status.py ask-hook`) also records a wait on the current step with the
+question's first 80 characters, so a question you forgot to announce still shows; the explicit
+`wait` stays, since its words are shorter. After a step's result, `loop_status.py note <ID> "<one-line
+result>"` is optional (a gate verdict, a batch size).
+
+Run every status command as its own Bash call: never chained with `&&` or `;`, never piped, never
+redirected to `/dev/null`, so its exit code and its JSON are the call's own. Read the exit code
+every time: 0 is done; 3 is `approval_required` (a skip request: follow its `ask_first`); 4 is
+`refused` (see below, a stop). Any other failure does not block the run: say so in one line and
+carry on. The server stays up until it is stopped; step 0 restarts
 it, and a status call after a stop starts it again. Do not otherwise mention the page.
 
 **Skipping a step needs David's yes.** No step is skipped on your judgment, a targeted run's
@@ -133,31 +141,7 @@ many rules the file tracks, and say the list may be incomplete. Finding
 missing rules is `reconcile_coaching_ids.py` (read-only without `--write`), outside the run. Do not
 propose a coaching edit here.
 
-## Step 4: Why
-
-```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py --cluster-key "<KEY>" --window <MON> <SUN> --per-cluster 20
-```
-
-Describes what ran, which asks went unanswered, which actions failed, which variables were set,
-and writes a labelling sheet under `~/.ada-evidence/tablo/sim/labels/`. It describes and never
-says why; repeat no cause claim as established. The labeller of record is the code rule: Ada
-sent the identical message twice in a row. `--llm-label` is a measurement tool, not part of the
-run. `--cluster-key` can be repeated to pool a `customer_text` cohort split by channel.
-
-### Step 4b: What a person did next (optional, one cluster)
-
-```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py --cluster-key "<KEY>" --window <MON> <SUN> --max-conversations 20 --max-gets 60
-```
-
-Zendesk, read-only, capped. Ask before raising `--max-gets`. To leave 4b out, ask David first:
-`loop_status.py skip 4b --reason "<why>"`, then its `ask_first` and, on his yes, its `on_yes`. Add
-`--excerpts` only if David asks
-to read the notes. Say: how many sampled conversations became a ticket, and on how many a person
-wrote something.
-
-### Step 4c: Up to three targets, one question each, read them
+## Step 4c: Up to three targets, one question each
 
 The only step that asks David to decide mid-run. He approves one question per target, for up to
 3 targets, and never approves answers one conversation at a time. Targeted mode reads its one
@@ -191,7 +175,13 @@ own wording through "Other" is what goes into `--question` for that target, verb
 target is not read. Before sending it: `loop_status.py wait 4c "Approve or replace up to 3
 questions"`.
 
-Then read each approved target on its own, one after the other, with its own sheet, its own
+## Step 4d: Read and verify each target
+
+Steps 4 (a 20-conversation read of one cluster) and 4b (what a person did next) were folded in
+here on 2026-10-05 (W89): the reading below covers what step 4 read, and the Zendesk read is part
+of a target that hands off.
+
+Read each approved target on its own, one after the other, with its own sheet, its own
 answer and its own recorded reading. Never pool two targets on one sheet. `<KEY>` is repeated
 for each of the target's cluster keys, as in its `read_it_with`.
 
@@ -199,6 +189,10 @@ for each of the target's cluster keys, as in its `read_it_with`.
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py --cluster-key "<KEY>" --window <MON> <SUN> --per-cluster 60
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py --cluster-review <SHEET> --question "<David's words, verbatim>"
 ```
+
+The sheet describes what ran, which asks went unanswered, which actions failed and which variables
+were set; it describes and never says why. The labeller of record is the code rule: Ada sent the
+identical message twice in a row. `--llm-label` is a measurement tool, not part of the run.
 
 Groups of 20, each read separately, never combined. Say per target and per group: the answer,
 then each statement with the conversations behind it, and how many statements are backed. A
@@ -221,6 +215,15 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py --reco
 `--verified-by` defaults to `claude`; pass `--verified-by david` only for transcripts David opened
 himself.
 
+For a target whose conversations hand off, read what the human agent did next (Zendesk,
+read-only, capped; ask before raising `--max-gets`; `--excerpts` only if David asks to read the
+notes). Say how many sampled conversations became a ticket, and on how many a person wrote
+something. It is optional and never needs a skip.
+
+```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py --cluster-key "<KEY>" --window <MON> <SUN> --max-conversations 20 --max-gets 60
+```
+
 `--question-id <ID>` re-asks a question already on file in `reference/history/questions.jsonl`. It
 refuses a sheet on a channel the question was not written for; ask that channel with `--question`.
 
@@ -231,7 +234,7 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py --artifact
 ```
 
 Always pass `--artifact`. Two tables: at most five findings ranked by conversation count with
-movement as the tie-breaker, each cluster read at step 4c taking a slot ahead of them, and
+movement as the tie-breaker, each cluster read at step 4d taking a slot ahead of them, and
 escalation findings scored against each channel's own handoff and resolution rate, ranked by how
 many times off its channel a playbook is. Above them, one line per channel (context, never a
 finding). Below them, where the handoffs sat by volume (where to work, never a ranking). Read
@@ -244,7 +247,7 @@ missing transcript read. No cause claim, no config proposal.
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py show --judgment <JUDGMENT JSON>
 ```
 
-`AskUserQuestion`, one question per finding from both tables, every target read at step 4c
+`AskUserQuestion`, one question per finding from both tables, every target read at step 4d
 among them, 4 findings a call and several calls when there are more: the finding in one or two
 lines, and approve, reject and defer as options with the one you recommend first and why. For a recommended approve, that option carries your
 drafted prediction: which way, to what number, in how many weeks. His free-text answer through
@@ -258,7 +261,7 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py decide --ju
 ```
 
 That call writes nothing; it prints the `on yes` command with a token. Run it verbatim. Approval
-is refused for a finding with no recorded transcript read this window (step 4c), on both tables;
+is refused for a finding with no recorded transcript read this window (step 4d), on both tables;
 the refusal prints the `--record-verification` command. Go and read; do not work around it.
 Reject and defer are unaffected. A prediction on an escalation finding is refused; approve it without one.
 
@@ -443,6 +446,12 @@ David with `AskUserQuestion`: `loop_status.py skip 7 --reason "<why>"`, its `ask
    P1 line goes at the bottom of the P0 and P1 section, a P2 or P3 line at the bottom of Open; say
    a P0 to David in one line. A finding a W item owns carries `(work: W#)` with no P tag, since it
    takes the W's priority. No recommendation.
+   Before writing each line, run the duplicate check on it as its own call and read what it lists:
+   `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py --line "<the line>"`. It
+   names open and closed findings that share an entity with the line (a playbook, rule or
+   changeset, directly or through a conversation or test run it cites) or 3 or more IDs. When one
+   already says it, add this run's evidence to that line (an open one) or name it in the new line
+   (a closed one) rather than filing the same thing under a new number.
 2. Full audit of FINDINGS and TODO (Friday runs only), by one sub-agent: read FINDINGS.md,
    `notes/FINDINGS-closed.md`, TODO.md, HISTORY.md and `notes/falsified.md` in full; propose closes
    (only on evidence in the files: a fix in HISTORY, a later finding, falsified, or out of scope by
