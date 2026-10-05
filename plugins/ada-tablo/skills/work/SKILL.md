@@ -20,7 +20,7 @@ Replies are one or two sentences in plain words. The root CLAUDE.md interaction 
 ## 1. Open the item
 
 Read TODO. Find the line for `$ARGUMENTS`. If no ID was given, or none matches, list the open IDs
-one line each with its priority, say which one is first (the list is in priority order, P0 to
+one line each with its title and priority ("W47 (Password Reset Fix) P1"), say which one is first (the list is in priority order, P0 to
 P3, defined in TODO under Priority levels; skip a line marked BLOCKED or QUEUED, and skip W1
 outside a Friday run), and stop.
 
@@ -30,8 +30,11 @@ David named.
 If the line says BLOCKED, say what it is blocked on in one line and stop, unless David says the
 blocker is cleared.
 
-Write the item under `## Now` in OngoingWork: the ID, its priority, the deliverable, the
-done-when, today's date. Then say two lines and nothing else:
+Write the item under `## Now` in OngoingWork: the ID, its title, its priority, the deliverable,
+the done-when, today's date. Record the open in the registry, the title as the TODO line carries it:
+`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py item <W#> --title "<Title>" --priority <P#> --status open --by david`.
+Say an ID with its title, "W47 (Password Reset Fix)", every time. Then say two lines and nothing
+else:
 
 > Deliverable: <the deliverable>.
 > Done when: <the done-when>.
@@ -146,9 +149,17 @@ When the done-when holds and you have read the verification output:
    changeset ID staged or promoted through a handoff skill and the ledger row that claims each
    promoted one, and whether files under `~/repos` were left uncommitted (they are, unless David
    asked for a commit; `Skill: commit-results` does that).
-3. Clear `## Now` in OngoingWork back to "Nothing in progress."
+3. Clear `## Now` in OngoingWork back to "Nothing in progress." Close the item in the registry,
+   with one link row first for every changeset this session staged or promoted and every decision it
+   registered or linked (`stage_playbook.py` and `ledger.py` write their own rows; this one ties
+   them to the item):
+   `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <CHANGESET-ID> --relation fixes --by david` (`--relation reads` for
+   a decision), then `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py item <W#> --status done --by david`. A changeset or decision ID
+   written into an open TODO line also gets its link row, or `doc_hygiene.py` flags it as bare.
 4. Say: "Deliverable complete, nothing pending." Add "N findings filed." if any. The message
    ends there: no next action, no suggestion, no offer.
 
 If the deliverable cannot be finished: write the blocker on the TODO line as `BLOCKED: <what>`,
-clear `## Now`, say "Blocked on <what>. Nothing pending." and stop.
+record it (`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py item <W#> --status blocked --by david`, and
+`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <blocker ID> --relation blocked_by --by david` when the blocker is a W,
+D or F item), clear `## Now`, say "Blocked on <what>. Nothing pending." and stop.

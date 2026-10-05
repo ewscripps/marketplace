@@ -3,7 +3,7 @@ name: evidence-loop
 description: Weekly evidence loop for the Tablo Ada instance. Shows where Ada got worse this week from the whole conversation population, turns real failed conversations into Ada test cases, and checks a staged change against them before a person promotes it. Read-heavy; every write to Ada sits behind an explicit approval. Use for the Friday review, or mid-week with a cluster, playbook or topic to chase one thing.
 user-invocable: true
 argument-hint: '[--window START END | --cluster KEY | --playbook ID | --topic ID] [--no-pull]'
-allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(ls *), Bash(mkdir -p *), Read, Grep, Glob, Edit(/Users/181085/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md), AskUserQuestion, Skill
+allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(ls *), Bash(mkdir -p *), Read, Grep, Glob, Edit(/Users/181085/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md), AskUserQuestion, Skill
 ---
 
 # Ada Evidence Loop (Tablo)
@@ -15,7 +15,9 @@ verifies a change someone has already staged; a person promotes it. Every stage 
 **How to talk during the run.** Every script prints one JSON result (`--format json`). Read it,
 then say two sentences: what happened, and what this run does next. One number with its
 denominator when it matters. No entity IDs unless David must paste one; no statistics words.
-Every question to David goes through `AskUserQuestion`: up to 4 questions per call, 2 to 4
+Every W, D or F ID you say or put in a question carries its title from the registry, "W47
+(Password Reset Fix)", and a changeset is said by its title ("CSAT Happy Paths"); `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py
+show <ID>` prints both. Every question to David goes through `AskUserQuestion`: up to 4 questions per call, 2 to 4
 options each, the recommended option first and marked (Recommended). Where his own words are
 recorded, the options include your recommended draft, and his free-text answer through "Other"
 is what gets recorded, verbatim. Anything noticed that is not this step's output and meets the
@@ -174,7 +176,9 @@ decision, and for every `regressing` line, ask David now with one `AskUserQuesti
 `loop_status.py wait 2b "Decide the rollouts"`): the change in one line, the cell's numbers and
 label, and the options (keep the rollout running, stop it, or widen it), your recommendation first.
 His answer is a decision he makes outside this loop (`weekly-playbook-analysis` Step 9 for a rollout
-change); record his words. While a rollout on a channel is `regressing` and David has not decided it,
+change); record his words. Once a rollout has ended (promoted or stopped), end its registry row, so
+`registry.py ready` stops holding that channel, one call per entity it names:
+`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <CHANGESET-ID> <ENTITY-ID> --relation rollout_on --channel <CHANNEL> --remove --by david`. While a rollout on a channel is `regressing` and David has not decided it,
 no new prediction goes on that channel: `approval_gate.py decide` refuses one there and asks for
 `--rollout-decided "<David's words>"`. A `regressing` line also takes target slot 1 at step 4c with
 its drafted question.
@@ -332,14 +336,16 @@ loss it recovers, the earliest look and the verdict date, and how many weeks the
 a change that size. The options are the page's two goal options (`goal.options`: the whole loss back
 and half of it, or the smallest goals one week and four weeks of data can see), each an approve with
 its goal, then reject and defer, the one you recommend first and why. No separate resolved-a-week
-question is asked. His free-text answer through "Other", a goal number included, is what gets
-recorded in `--note`, verbatim. Before the first call: `loop_status.py wait 5.5 "Decide every
+question is asked. Each approve creates or extends a W item with that goal: the question names it,
+"extends W62 (Chat Connectivity Fix)" when an open W item already works that playbook, rule or topic
+(`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py show` lists them with their links), else "new W item, <2 to 3 word title>" with
+the next free ID (one past the highest W in TODO, HISTORY or the registry). His free-text answer
+through "Other", a goal number included, is what gets recorded in `--note`, verbatim. Before the first call: `loop_status.py wait 5.5 "Decide every
 finding, with a goal for each approve"`. Then, per finding, with the chosen option's `prediction`
 JSON passed as it stands:
 
 ```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py decide --judgment <JSON> --finding <ID> --decision approved|rejected|deferred --note "<David's words>" --prediction '{"cluster_key":"<KEY>","metric":"pct","direction":"down","threshold":3.5,"horizon_weeks":1}'
-```
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py decide --judgment <JSON> --finding <ID> --decision approved|rejected|deferred --note "<David's words>" --prediction '{"cluster_key":"<KEY>","metric":"pct","direction":"down","threshold":3.5,"horizon_weeks":1}' --item <W#>
 
 That call writes nothing; it prints the `on yes` command with a token and its `question` carries
 the goal block for the prediction given. Run `on yes` verbatim. Approval is refused for a finding
@@ -498,11 +504,27 @@ David with `AskUserQuestion`: `loop_status.py skip 7 --reason "<why>"`, its `ask
    in the monthly sweep. Nothing is applied yet. Ask David with `AskUserQuestion` whether to apply
    it (the counts in the question: closes, merges, new and extended W items), apply on his yes,
    then run `workspace/doc_hygiene.py` without `--fix` (F451) and fix what it flags.
-3. Invoke `Skill: commit-results` with args `evidence`.
-4. Run `loop_status.py done "Run complete. N decisions recorded, M findings added, nothing
-   pending."` with the real counts. It refuses while any step has neither run nor a skip David
-   approved; then stop and ask him with `AskUserQuestion` about the steps it names, and run `done` again after. Once it
-   succeeds, say exactly that line and stop. That message has no next action and no offer.
+3. Record how the run ends, as its own calls. (A) Every change this run staged, gated GO or
+   promoted, one call each:
+   `loop_status.py shipped <CHANGESET-ID> --title "<2 to 3 words>" --staged --gated-go --promoted`
+   (the flags that hold). (B) When nothing was staged or gated: a week plan of at most 5 W items,
+   most resolved conversations a week first, one call each, the title read from the registry:
+   `loop_status.py plan <W#> --goal <resolved a week> --route "<stage script or skill>" --blocker
+   "<what it waits on, or none>"`. Ask David with `AskUserQuestion` to approve the plan (the items
+   with title and goal in the question). Its result prints `this_week`: put those lines in
+   `~/Obsidian/Projects/Ada-Evidence-Loop/OngoingWork.md` under `## This week`, replacing what is
+   there, on his yes. `registry.py ready` lists the open P1 items with a stage route and nothing in
+   the way, and why each other one is held.
+4. Invoke `Skill: commit-results` with args `evidence`; `reference/history/registry.jsonl` goes
+   with it.
+5. Run `loop_status.py done "Run complete. N decisions recorded, M findings added, nothing
+   pending."` with the real counts, and `--tokens N` when the session's token count is known. It
+   refuses while any step has neither run nor a skip David approved; then stop and ask him with
+   `AskUserQuestion` about the steps it names, and run `done` again after. It also refuses while
+   the run has neither a shipped list nor a complete week plan; its JSON names what is missing:
+   record it (item 3) and run `done` again. An accepted `done` appends the run's scorecard row to
+   `reference/history/loop-runs.jsonl` (it goes with the next commit). Once it succeeds, say exactly
+   that line and stop. That message has no next action and no offer.
 
 ## Settled (David, 2026-09-22)
 
