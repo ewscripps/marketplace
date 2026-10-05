@@ -12,10 +12,38 @@ say "moved more than chance explains". No entity IDs unless he must paste one.
 
 ## Step 1
 
-`--no-close` previews the closures; step 5.7 appends the verdict rows. The seasonal banner: Tablo
+`--no-close` previews the closures; step 2b appends the verdict rows. The seasonal banner: Tablo
 demand tracks the fall TV season and the holiday buying cycle, so inside a ramp broad simultaneous
 movement should be read as seasonal until shown otherwise, and no decision should be opened on a
 cluster whose movement is channel-wide.
+
+## Step 2b: last week's changes
+
+Why it runs second. Three runs in a row (2026-09-28, 2026-10-02, 2026-10-05) collected data, read
+targets and changed nothing in Ada. On 2026-10-05 the week's largest fact, the CSAT rollout
+regression (F637: Connectivity chat resolved 7 of 85 on the change arm against 21 of 99 on the
+control), was on the step 1 page at 13:03 UTC and acted on at 13:41, after two approvals were
+written. Last week's changes are read before anything new is approved, and a regressing one holds
+new predictions on its channel until David decides it.
+
+Why the pull and not Ada's metrics. The export carries `changeset_id` on every conversation, so a
+rollout's arm and control are split exactly, on the same days, with no Ada call. The control
+follows the scoreboard's rule: with two rollouts at 50% on different channels, the other rollout's
+arm on this channel (D17); otherwise `changeset_id` baseline. Only playbooks and articles can be
+found in the export; a coaching rule's export id is not the rule's, so coaching and tools are listed
+as not read.
+
+Why email on a partial read is not scored (F615). Chat and voice are graded as they end (F391); email
+is graded days later, so in a week that ended under 72 hours ago most email is ungraded and the
+graded remainder is mostly handoffs: -39.3 points [-49.7, -27.7] from grading lag alone on
+2026-10-02. The cell is shown with its numbers and labelled too early.
+
+Labels. regressing: resolution's 95% interval lies wholly below zero (above it, for a change
+expected to lower resolution), whatever the goal. on track or behind: against a goal in resolved
+conversations a week, from the deploy note (`note --expect "resolution up 12/wk on <id>/<channel>"`)
+or an open ledger decision on that changeset and channel. no goal: neither. too early: under 72
+hours live inside the week, a side with no conversations, no weekly pull on disk for the before
+window, or email on a partial read.
 
 ## Step 3: a topic that is not a cluster
 
@@ -98,25 +126,36 @@ that cannot be matched to this week's conversations is listed, never dropped; it
 large minority (78 of 134 active rules on 2026-09-18) and a real limit on what a week can see.
 Quote Ada's number; the pull only says how many conversations you could actually read.
 
-**Groups of 20.** The sheet is split into groups of 20 and each group is read separately, so 60
-conversations is three calls, not one enormous one. Every statement the model makes must name the
-conversations that show it, and each group's citations are checked against that group's
-conversations only. The groups are reported one by one; nothing combines them, because combining
-is where a claim loses the conversations that were supposed to back it. Citations resolve by
-prefix: 8 or more characters matching exactly one conversation resolves; several is ambiguous and
-not guessed at; none is the fabrication case.
+**One row per conversation, read twice (W89 Stage D, 2026-10-05).** Until 2026-10-05 a group of
+20 came back as one answer with claims citing conversations, and a citation was only checked for
+being in the group. On the 2026-10-05 target 1 read a claim that a dead Tablo got "only handoff,
+not replacement path or warranty offer" cited `6abd8fbeafdf9da3ffe324f4`, whose transcript asks
+"Would you like me to provide the link to request a replacement Tablo?"; the check passed it. Now
+the model returns, for each conversation, `applies`, `answer` (yes, no, cannot tell), the step the
+answer turns on, and a quote copied from one message. Code checks the quote is in that
+conversation's stored messages (case, spacing, curly quotes and markdown asterisks aside; Ada's
+own summary is never searched), and a yes or no without a found quote is unsupported. Each
+conversation is read twice, groups of 10, the second grouping taking every sixth row of a
+60-row sheet, so its neighbours differ; agreement is the share answered the same both times.
+At 3 targets of 120 that is 72 Haiku calls. Measured on the 2026-10-05 target 2 sheet (60
+conversations, 12 calls): 6 minutes 25 seconds wall time, $1.67 nominal on the subscription.
 
-**Three things to report and not bury.** A statement with no conversation behind it is printed
-and marked; do not repeat it. A conversation named that is in no part of the cluster is a
-fabrication; say so and treat the whole answer with suspicion. A group whose reply could not be
-read reports nothing at all; the other groups still stand.
+**Sample size.** All of a channel cluster under 150 conversations, else 120. The 2026-10-05
+target 2 read stopped its chat cluster at 30 of 188 because a 60-fetch cap was shared by chat,
+voice and email. `--per-cluster N` still gives the older capped read that stops on saturation.
+
+**Three things to report and not bury.** A row whose quote is not in the conversation is
+counted and marked; do not repeat its answer. A row naming a conversation that was not in its
+group is dropped and counted; a warning prints. A group whose reply could not be read loses only
+its conversations' reading; they show as read once.
 
 **Why the verification gate exists.** "Check it yourself" used to be a sentence here and nothing
 enforced it, so it was skipped and a third confident wrong cause reached a fix on 2026-09-18. It
 is now a gate: `--record-verification` refuses an id that is not in the cluster or has no
-transcript on disk, stage 5 prints NOT VERIFIED against every finding with no row, and stage 5.5
-will not approve one. Rejecting or deferring still works without it. A model may describe and
-cite; cause is yours to establish.
+transcript on disk, and, when the targeted read of that cluster and window has disagreements,
+refuses a reading that names none of them; stage 5 prints NOT VERIFIED against every finding
+with no row, and stage 5.5 will not approve one. Rejecting or deferring still works without it.
+A model may describe and cite; cause is yours to establish.
 
 **The default questions.** Without `--question` the command asks four fixed ones: what pattern,
 what flow is missing, what was misrouted, how sure. Fine for a first look at an unfamiliar
@@ -160,17 +199,25 @@ shows, so the prediction would be stored in units nobody typed (David, 2026-09-2
 
 ## Step 5.6
 
-The horizon David typed is the one used. The power calculation is reported as `power_weeks` /
-`underpowered` and never acted on (David, 2026-09-16). Predictions counted in conversations are
-refused because the verdict engine compares rates.
+The horizon David types is the earliest look (W85, one week by default). The verdict date is the
+power weeks: the weeks of the cluster's volume the data needs to see the predicted change at 80%
+(David, 2026-10-05, changing W85 and the 2026-09-16 rule that power was reported and never acted
+on). A decision is still looked at from the earliest look, and the one-look rule holds an
+underpowered one open, so an early look cannot close it on chance. Predictions counted in
+conversations are refused because the verdict engine compares rates. The goal comes first: every
+imported decision carries `goal_resolved_per_week` and a resolved-a-week row, computed when the
+cluster translates (a topic's unresolved share joined the failure kinds on 2026-10-05, so both
+2026-10-05 approvals translate), else the goal chosen at the gate.
 
-## Step 5.7
+## Step 2b: closing
 
 Never soften "no change attached" into a hint that two things are connected. Eight changesets
 shipped between 2026-09-14 and 2026-09-17, four of them inside two hours, so one attached change
-is a candidate and never a cause.
+is a candidate and never a cause. "moved, short of target" replaced "CONFIRMED, target NOT
+reached", and "reached, underpowered" replaced INCONCLUSIVE on a target already reached (W89
+Stage B): both verdicts were read as their opposite.
 
-## Step 5.8
+## Step 2b: which change each prediction tested
 
 `ledger.py link` reads the changeset from Ada and refuses one that is not promoted. It appends a
 row and never edits the decision. If the link disagrees with a changeset already written on the

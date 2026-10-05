@@ -86,7 +86,7 @@ done-when, today's date. Then say two lines and nothing else:
   This skill writes to them in one place, close step 1 below, with `ledger.py register` or
   `ledger.py link`, for a changeset promoted while the session is open. Every changeset ID this
   session stages or promotes still goes on the HISTORY line at close; one staged but not
-  promoted is left for the Friday run's step 5.8 ("changes nobody claimed").
+  promoted is left for the Friday run's step 2b ("changes nobody claimed").
 
 ## 3. Findings
 
