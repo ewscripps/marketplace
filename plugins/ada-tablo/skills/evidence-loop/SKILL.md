@@ -451,17 +451,19 @@ GO needs every case to meet its rule, or every failing case waived and at least 
   when the change passes more than one run in three fewer than live (2 of 3 against live 3 of 3
   passes; 1 of 3 against live 3 of 3 blocks), or passes under half its runs while live passes at
   least half. A regression case that never entered the playbook on either arm is
-  `not_applicable` and is left out; if it has live evidence on disk and never entered on the
-  change, it is a fail.
+  `not_applicable` and is left out; if live entered it (this batch's live arm, or a compare on
+  disk that counts entry) and the change never did, it is a fail.
 - **Entry.** `entry_not_worse` fails when the change enters the playbook more than 0.34 below live
   (the share of ended runs that entered). For a change meant to narrow when a playbook fires,
-  pass `--entry-drop-expected` and the check records as waived.
+  pass `--entry-drop-expected` and the check records as waived. The flag also skips the two
+  per-case entry fails above: each case is judged on its criteria, and a case left short of
+  evidence only because the change did not enter it reads `not_applicable`.
 - **No evidence.** A run that timed out or was cancelled, never entered the playbook, was cut off
   before the playbook ended, had no spoken line in the playbook window, never set a `reached_vars`
   variable of its case's bench spec, had an `action_executed` result that failed or was throttled
   (429), or got no usable judge answer is `no_evidence`. It is neither a pass nor a fail. The gate
-  prints how many it left out per arm, and a case with fewer than 2 evidence-bearing runs on an
-  arm is inconclusive and blocks GO.
+  prints how many it left out per arm, and a case with fewer than 2 evidence-bearing runs on the
+  change arm is inconclusive and blocks GO.
 - **Disputed runs.** A run where our judge failed it, Ada's judge passed it, and a second judgment
   of the same criteria passed is `disputed`. Read its transcript and record
   `{"test_run_id": ..., "read": "pass"|"fail", "by": ..., "note": ...}` in
@@ -470,7 +472,8 @@ GO needs every case to meet its rule, or every failing case waived and at least 
   also reports `judge_disputes`, the runs where our judge failed and Ada's passed.
 - **Near miss.** Before any restage, run the three `top_up` lines the gate prints: a `run` of the
   near-miss cases with `--changeset-only --reps 3`, a `compare` of that new batch, and
-  `gate --batch <BATCH> --pool <NEW_BATCH>`. A pooled batch must test the same changeset and must
+  `gate --batch <BATCH> --pool <NEW_BATCH>`, which carries the first gate's `--targets` and
+  `--entry-drop-expected` when it had them. A pooled batch must test the same changeset and must
   have started after its last stage.
 - **Waiver.** A failing case is waived only by a row in the reasons file with a reason and
   `"waive": true`. A reason alone records the failure and does not waive it, and a batch where no
@@ -493,7 +496,9 @@ step is a fix and one more failures-first batch, with no more runs on the same c
 and which clusters the batch tested. Record the verdict: `loop_status.py note 6c "gate GO 9 of 9"`
 (or NO-GO with its count).
 
-**6d. Promotion.** `sim_harness.py promote` is a stub and sends nothing. Show its summary and
+**6d. Promotion.** `sim_harness.py promote` is a stub and sends nothing. It re-runs the gate, so
+give it the same `--targets`, `--pool` and `--entry-drop-expected` the GO gate used; without them
+it judges a different case set, can read NO-GO, and overwrites the gate file. Show its summary and
 ask with `AskUserQuestion`: "Promoting is your call and it happens outside this loop." Before saying it:
 `loop_status.py wait 6d "Promote outside the loop, or not"`. If David wants to promote, hand
 off to `weekly-playbook-analysis` Step 9. Do not offer to enable the promote call. Before David

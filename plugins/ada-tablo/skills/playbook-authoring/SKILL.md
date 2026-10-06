@@ -170,9 +170,14 @@ every voice playbook on a clear question before the exit (R12).
 First self-check the draft against Section B, rule by rule, and say which rules you checked and
 what you found. A silent pass is not a pass.
 
-Run `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/authoring_lint.py playbook --payload <payload.json>` on the
-dry-run payload. An error stops the stage. Each warning is fixed, or answered in one line in the
-spec.
+The lint runs inside the dry run of
+`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/stage_playbook.py EDIT [--variant V] [--changeset ID]`
+(the `work` session runs it), against the live body it reads: an error live already has prints as
+`lint warning: already on live: ...`, and the wrong-channel check falls back to live's availability
+rules. Read that output. A lint error is listed under `VALIDATION FAILED` and stops the stage. Each
+`lint warning:` line is fixed, or answered in one line in the spec. Do not lint the payload file
+alone with `authoring_lint.py playbook --payload`: without the live body it stops on errors live
+already has and skips the wrong-channel check when the payload carries no availability rules.
 
 Then run the structural gate:
 
