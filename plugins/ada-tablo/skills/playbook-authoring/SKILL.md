@@ -3,7 +3,7 @@ name: playbook-authoring
 description: Draft or revise an Ada playbook against the platform constraints and the measured authoring rules for this instance, voice first. Checks the draft with config-health, compares it to the strongest live performers, reads real calls through the playbook before a rewrite, and hands a build spec to the stage route: a `scripts/stage_*.py` script for a `sections` edit, weekly-playbook-analysis Step 9 for any other field. Never deploys anything.
 user-invocable: true
 argument-hint: '[--new "goal"] [--edit PLAYBOOK_ID] [--review PLAYBOOK_ID]'
-allowed-tools: Read, Grep, Glob, AskUserQuestion, Skill
+allowed-tools: Read, Grep, Glob, AskUserQuestion, Skill, Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/authoring_lint.py *), mcp__ada-tablo__search_coaching
 ---
 
 # Playbook Authoring
@@ -18,8 +18,8 @@ written. It passed every gate that existed. It failed on step structure and paci
 looked at, and one caller held the reset button for ten seconds during a spoken block and lost
 their recordings (`6aac7a93bf786671cad5d61a`).
 
-**This skill never deploys.** It drafts, checks, and hands off. It has no `Bash` and makes no
-`edit_agent_behavior` or `edit_agent_config` call at any point. The tool boundary is what makes
+**This skill never deploys.** It drafts, checks, and hands off. The one shell command it runs is the
+authoring lint, and it makes no `edit_agent_behavior` or `edit_agent_config` call at any point. The tool boundary is what makes
 that true, not this sentence.
 
 **Voice first.** Voice was 1428 of 2954 engaged conversations in 2026-09-14..20, escalates 75.0%
