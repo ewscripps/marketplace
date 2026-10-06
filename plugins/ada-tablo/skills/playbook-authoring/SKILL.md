@@ -125,6 +125,10 @@ can check later is a change nobody can learn from.
 
 ## Step 4: Draft
 
+Before the build spec, search existing coaching for the target playbook's intent with
+`search_coaching` (Ada improvement guide, step 4). List any rule that routes to or speaks inside
+this playbook, and resolve the overlap in the spec.
+
 Write sections, steps and the exact text of every message, instruction, `exact_words` and
 extraction instruction. Section B of the rules file is the checklist; the rules that catch the most
 real defects on this instance, in order:
@@ -143,6 +147,10 @@ real defects on this instance, in order:
 4. **R4, ask what has already been tried** before prescribing anything.
 5. **R6 and R7, every failure branch terminates**, and every retry is bounded by a counter and an
    exit, not `max_reask_attempts` alone.
+6. **R14, one job per ask.** The ask's instruction is 300 characters or fewer; procedure, product
+   facts and re-ask policy live elsewhere (a contextual SEND on chat, `general_instructions` for
+   behaviour that spans steps).
+7. **R15, one or two fixes per pass** on a restage, each tied to a failing gate transcript.
 
 **Customer-facing copy follows the project style guide, every word of it.** Plain language, no
 buzzwords, no em-dashes, no "it's not X, it's Y", no "Good news". Say why a step helps in one or two
@@ -161,6 +169,10 @@ every voice playbook on a clear question before the exit (R12).
 
 First self-check the draft against Section B, rule by rule, and say which rules you checked and
 what you found. A silent pass is not a pass.
+
+Run `python3 evidence-loop/scripts/authoring_lint.py playbook --payload <payload.json>` on the
+dry-run payload. An error stops the stage. Each warning is fixed, or answered in one line in the
+spec.
 
 Then run the structural gate:
 
