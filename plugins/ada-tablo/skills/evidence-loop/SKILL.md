@@ -403,9 +403,9 @@ Run the `on_yes` command it returns.
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py run --cases-file <DRAFTS>.applied.jsonl --changeset <ID> --reps 3 --targets <ID,ID>
 ```
 
-`--targets` names the failures-first cases the change claims to fix; every other case in the batch
-is a regression case (step 6c). A cases file can carry the same thing as `"role": "target"` rows.
-With no targets named, every case is a target. `run` saves the batch record before its first
+`--targets` names the cases the change claims to fix, and every other case in that batch is a
+regression case (step 6c). A cases file can carry the same thing as `"role": "target"` rows. With
+no targets named, every case in the batch is a target, which is right for a failures-first batch. `run` saves the batch record before its first
 create and splits the cases into creates of 10 (`--chunk`, default 10) with a 120-second pause
 between them (`--pause`, default 120), so a batch of several chunks can outlast a 10-minute
 foreground command: start it in the background and wait for it to finish.
@@ -416,15 +416,20 @@ Ada runs about 10 at a time with the rest queued (F102), so 160 voice runs take 
   runs started all at once (F89).
 - Cases already measured on live (a calibration floor, or a case from an earlier batch on the same
   live body) run on the change only: add `--changeset-only`. Only new cases need the live arm.
-- Top up only a case with fewer than 3 complete runs, and pool complete runs by test case id.
+- Top up only through the `top_up` lines the gate prints (step 6c); they pool the new batch with the old one.
 - **Sizing a restage.** Rerun only the failing and inconclusive target cases. Rerun a regression
   case only when the gate did not mark it `not_applicable` and an earlier run of it set one of
   its `reached_vars` variables (a run that never reached the changed steps says nothing). Drop
   `not_applicable` cases from the change's regression set.
 - Voice cases that carry a `bench` spec are scored on the playbook window, not by Ada's judge.
 - **Failures first.** When the change answers known failing cases, the first batch is only those
-  cases, 3 reps, `--changeset-only`. The regression batch (every other case for the playbook) runs
-  only after the first batch clears, never in the same batch and never before it.
+  cases, 3 reps, `--changeset-only`, gated on its own with every case a target. The regression
+  batch (every other case for the playbook) runs only after the first batch clears, never in the
+  same batch and never before it. Gate the regression batch with
+  `sim_harness.py gate --batch <REGRESSION_BATCH> --pool <FAILURES_FIRST_BATCH> --targets <FAILURES_FIRST_CASE_IDS>`:
+  the two batches pool, the failures-first cases are targets, and the rest are regression cases
+  judged against live. Pooling needs the same changeset and no restage between the two batches; a
+  restage starts again from a failures-first batch.
 - **Voice ceiling: 30 runs a batch.** That is three rounds of 10 concurrent calls, under an hour.
   Above 30 a voice batch returns `approval_required` exactly like a batch above 100 runs and does
   not start without David's confirm token: ask David with `AskUserQuestion`, the number in the question, and run the `on_yes` command
@@ -443,8 +448,9 @@ GO needs every case to meet its rule, or every failing case waived and at least 
   pass when every evidence-bearing run passes, or when at most 1 run fails in 6 or more pooled
   runs. One failure in fewer than 6 runs is a near miss. A target the change never entered is a fail.
 - **Regression cases** (every other case) are judged against live on the same case. One blocks
-  when the change passes a run in three fewer than live, or passes under half its runs while live
-  passes at least half. A regression case that never entered the playbook on either arm is
+  when the change passes more than one run in three fewer than live (2 of 3 against live 3 of 3
+  passes; 1 of 3 against live 3 of 3 blocks), or passes under half its runs while live passes at
+  least half. A regression case that never entered the playbook on either arm is
   `not_applicable` and is left out; if it has live evidence on disk and never entered on the
   change, it is a fail.
 - **Entry.** `entry_not_worse` fails when the change enters the playbook more than 0.34 below live
@@ -569,6 +575,6 @@ David with `AskUserQuestion`: `loop_status.py skip 7 --reason "<why>"`, its `ask
 ## Settled (David, 2026-09-22)
 
 - D3: promotion stays manual, through `weekly-playbook-analysis` Step 9; the live promote call is not enabled.
-- D4: a failing test case may be waived with a written reason; the bar is not a hard 100%.
+- D4: a failing test case is waived only by a reason with `"waive": true`; a reason alone records the failure. The bar is per case by role (step 6c), with no hard 100%.
 - D5: a decision whose evidence is not decisive at its horizon closes itself as "not enough evidence".
 - D7: voice test runs simulate the conversation (F48); there is no audio, so speech recognition, barge-in and keypad input are not tested.

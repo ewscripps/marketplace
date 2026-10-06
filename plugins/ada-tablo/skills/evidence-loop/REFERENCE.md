@@ -231,10 +231,12 @@ prediction sits on a cluster, never pick one yourself.
 that is the only moment both are in hand; it is what lets a verdict weeks later name the change
 instead of guessing at one. Nothing is sent to Ada; it is a line on disk.
 
-The bar (David, 2026-09-16): every test case made for the change passes on every run, or at least
-one passes on every run and every remaining failure has a written reason. A written reason waives
-the failure; the bar is not a hard 100% (D4, David, 2026-09-22), because on a non-deterministic
-bench a hard 100% gives either fake passes or a gate that is always red. For a voice change the bar is outcome criteria plus assertions
+The bar (David, 2026-09-16, reworked by W95, 2026-10-06) is per case, by role, as `evidence-loop`
+step 6c states it: a target case passes on every evidence-bearing run (or at most 1 failure in 6 or
+more pooled runs), and a regression case is judged against live on the same case. A failing case
+is waived only by a reason with `"waive": true`; a reason alone records the failure. The bar is
+not a hard 100% (D4, David, 2026-09-22), because on a non-deterministic bench a hard 100% gives
+either fake passes or a gate that is always red. For a voice change the bar is outcome criteria plus assertions
 (David, 2026-09-23, W10): the D12 circle was held up by a "same thing twice" rule that live failed
 at the same rate as the change (F119). `run --cases ID` picks up the bench spec a case was created
 or last run with from `sim/` (F105); a case with none on disk is named on stderr and scored by

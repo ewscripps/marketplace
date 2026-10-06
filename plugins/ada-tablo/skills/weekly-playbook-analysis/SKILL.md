@@ -400,8 +400,9 @@ ceiling, and its GO / NO-GO bar. Bring its gate verdict and batch id back to ste
    `did_pass: true` is not proof the change works if the criteria don't actually probe it.
 6. Block promotion on any real regression relative to the pre-edit baseline for that test
    case. `evidence-loop` step 6c applies the same rule: a regression case is judged against live
-   on the same case and blocks when the change passes a run in three fewer than live, or passes
-   under half its runs while live passes at least half. Target cases (`--targets`) pass on every
+   on the same case and blocks when the change passes more than one run in three fewer than live
+   (2 of 3 against live 3 of 3 passes; 1 of 3 against live 3 of 3 blocks), or passes under half
+   its runs while live passes at least half. Target cases (`--targets`) pass on every
    evidence-bearing run, or at most 1 failure in 6 or more pooled runs. Surface the pass/fail
    delta (not just raw counts) to the user in the step 7 preview.
 
