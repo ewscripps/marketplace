@@ -2,7 +2,7 @@
 name: coaching-review
 description: Run monthly coaching inventory review. Syncs with Ada MCP, tracks coaching effectiveness, guides new coaching implementation via edit_agent_behavior changesets.
 user-invocable: true
-allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/reconcile_coaching_ids.py), Bash(mkdir *), Bash(cp *), Bash(ls *), Read, Grep, Glob, AskUserQuestion, Skill
+allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/reconcile_coaching_ids.py), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/authoring_lint.py *), Bash(mkdir *), Bash(cp *), Bash(ls *), Read, Grep, Glob, AskUserQuestion, Skill, mcp__ada-tablo__search_coaching
 ---
 
 # Coaching Management Review
@@ -422,11 +422,16 @@ For abstract rules with no source conversation:
 
 **Fill in Fields:**
 
-| Field | Guidance |
-|-------|----------|
-| **User Intent** | Triggering scenario — be specific about customer situation |
-| **Planned Action** | What Ada should do (use playbook, search knowledge, reply directly) |
-| **Instructions** | Detailed guidance for Ada's response behavior |
+| Field | Guidance (Ada coaching best practices) |
+|-------|-----------------------------------------|
+| **User Intent ("When replying to")** | One scenario, in one sentence. No exclusion list: a case to leave out is its own rule or belongs to the playbook. |
+| **Planned Action** | Use a playbook, search knowledge, or send a message. |
+| **Instructions** | Simple and short, 500 characters at most. No numbered procedure; a procedure is a playbook. |
+
+Before staging a rule:
+1. Run `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/authoring_lint.py coaching --intent "..." --instruction "..."`. An error stops it.
+2. Run `search_coaching` with the intent's words and list every rule with a near-duplicate intent and the playbook it routes to. Two rules with the same scenario routing to different playbooks are resolved before staging.
+3. If the rule can fire inside a playbook, run that playbook's existing gate cases on the change and check `coaching_in_window` in the compare result.
 
 **Module Selection:**
 - **Planner:** Affects initial routing/playbook selection (most common)
