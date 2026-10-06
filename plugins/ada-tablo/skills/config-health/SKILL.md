@@ -325,10 +325,15 @@ about what the caller will see when it is finished (the router's lights, the nex
 1. **A `send` that asks the caller to perform a physical action, followed directly by an `ask`** (no
    other spoken step between) that asks whether it is done. That is the old shape: the instruction and
    the confirmation are two turns.
-2. **An `ask` whose question, `exact_words` or instruction asks the caller to say "done"**, or to
-   "let me know when you're done", without naming a result they will see. Search the text for
-   `done`, `finished`, `ready`, `let me know when`; a question that names a visible result ("tell me
-   when the light is solid blue") passes.
+2. **An `ask` whose question, `exact_words`, instruction or re-ask requests notification that
+   an action is done**, including "say done", "tell me when the app is open", "let me know when
+   it's installed", or "let me know once it's ready". Search for completion requests using
+   `done`, `finished`, `ready`, `tell me when`, `let me know when` and `let me know once`.
+   Naming a visible result does not exempt a notification request: "tell me when the light is
+   solid blue" also fails. A question about the current observed result, such as "What does the
+   app show now?" or "What color is the light now?", passes when paired with the action in the
+   same turn. Flag a first ask that omits the action and an interrupted action that is never
+   repeated. On a re-ask, omit the action only if it was already spoken in full.
 3. **A physical-step `ask` on `when_to_ask: only_when_needed`** (the default, or null). An earlier
    "done" or "yes" can answer it silently, so the caller is given the next step before acting on this
    one.
