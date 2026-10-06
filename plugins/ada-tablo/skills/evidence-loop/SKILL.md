@@ -400,8 +400,15 @@ Run the `on_yes` command it returns.
 **6b. Run on live and on the change, three times each.**
 
 ```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py run --cases-file <DRAFTS>.applied.jsonl --changeset <ID> --reps 3
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py run --cases-file <DRAFTS>.applied.jsonl --changeset <ID> --reps 3 --targets <ID,ID>
 ```
+
+`--targets` names the failures-first cases the change claims to fix; every other case in the batch
+is a regression case (step 6c). A cases file can carry the same thing as `"role": "target"` rows.
+With no targets named, every case is a target. `run` saves the batch record before its first
+create and splits the cases into creates of 10 (`--chunk`, default 10) with a 120-second pause
+between them (`--pause`, default 120), so a batch of several chunks can outlast a 10-minute
+foreground command: start it in the background and wait for it to finish.
 
 Size the batch before you start it. Voice runs are real simulated calls of several minutes, and
 Ada runs about 10 at a time with the rest queued (F102), so 160 voice runs take about two hours.
@@ -410,6 +417,10 @@ Ada runs about 10 at a time with the rest queued (F102), so 160 voice runs take 
 - Cases already measured on live (a calibration floor, or a case from an earlier batch on the same
   live body) run on the change only: add `--changeset-only`. Only new cases need the live arm.
 - Top up only a case with fewer than 3 complete runs, and pool complete runs by test case id.
+- **Sizing a restage.** Rerun only the failing and inconclusive target cases. Rerun a regression
+  case only when the gate did not mark it `not_applicable` and an earlier run of it set one of
+  its `reached_vars` variables (a run that never reached the changed steps says nothing). Drop
+  `not_applicable` cases from the change's regression set.
 - Voice cases that carry a `bench` spec are scored on the playbook window, not by Ada's judge.
 - **Failures first.** When the change answers known failing cases, the first batch is only those
   cases, 3 reps, `--changeset-only`. The regression batch (every other case for the playbook) runs
@@ -426,12 +437,40 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py compare --bat
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py gate --batch <BATCH> --prediction '{"cluster_key":"<KEY>","metric":"pct","direction":"down","threshold":3.5,"horizon_weeks":1}'
 ```
 
-The bar is per batch: GO when every case in this batch passes on every run, or when at least one
-case passes on every run and every remaining failure has a written reason. A run with no spoken
-lines in the playbook window, or whose `action_executed` result failed or was throttled (429), is
-`no_evidence`: it does not count toward "passed every run", the gate prints how many it excluded
-per arm, and a case with fewer than 2 evidence-bearing runs on an arm is inconclusive and blocks
-GO. For a voice change the bar is outcome criteria plus assertions only. A gate
+The bar is per case, and the rule depends on the case's role (rule `every_case_meets_its_rule`).
+GO needs every case to meet its rule, or every failing case waived and at least one case passing.
+- **Target cases** (named with `--targets` on `run`, or on `gate` to override the batch's list)
+  pass when every evidence-bearing run passes, or when at most 1 run fails in 6 or more pooled
+  runs. One failure in fewer than 6 runs is a near miss. A target the change never entered is a fail.
+- **Regression cases** (every other case) are judged against live on the same case. One blocks
+  when the change passes a run in three fewer than live, or passes under half its runs while live
+  passes at least half. A regression case that never entered the playbook on either arm is
+  `not_applicable` and is left out; if it has live evidence on disk and never entered on the
+  change, it is a fail.
+- **Entry.** `entry_not_worse` fails when the change enters the playbook more than 0.34 below live
+  (the share of ended runs that entered). For a change meant to narrow when a playbook fires,
+  pass `--entry-drop-expected` and the check records as waived.
+- **No evidence.** A run that timed out or was cancelled, never entered the playbook, was cut off
+  before the playbook ended, had no spoken line in the playbook window, never set a `reached_vars`
+  variable of its case's bench spec, had an `action_executed` result that failed or was throttled
+  (429), or got no usable judge answer is `no_evidence`. It is neither a pass nor a fail. The gate
+  prints how many it left out per arm, and a case with fewer than 2 evidence-bearing runs on an
+  arm is inconclusive and blocks GO.
+- **Disputed runs.** A run where our judge failed it, Ada's judge passed it, and a second judgment
+  of the same criteria passed is `disputed`. Read its transcript and record
+  `{"test_run_id": ..., "read": "pass"|"fail", "by": ..., "note": ...}` in
+  `sim/reads_<BATCH>.jsonl`. Until every disputed run has a row the check `disputed_runs_read`
+  fails and the case fails; a read that says pass counts as a pass. Each case in the gate output
+  also reports `judge_disputes`, the runs where our judge failed and Ada's passed.
+- **Near miss.** Before any restage, run the three `top_up` lines the gate prints: a `run` of the
+  near-miss cases with `--changeset-only --reps 3`, a `compare` of that new batch, and
+  `gate --batch <BATCH> --pool <NEW_BATCH>`. A pooled batch must test the same changeset and must
+  have started after its last stage.
+- **Waiver.** A failing case is waived only by a row in the reasons file with a reason and
+  `"waive": true`. A reason alone records the failure and does not waive it, and a batch where no
+  case passed cannot be waived at all. A case that is inconclusive is never waived.
+
+For a voice change the bar is outcome criteria plus assertions only. A gate
 case's `judge_criteria` say what the caller ends up with (the serial captured, the offer asked
 before a transfer, no troubleshooting step given). Wording and repeat rules ("same thing twice",
 "never asks in the same words", "stops asking for the serial") never sit in a gate case's
@@ -440,10 +479,11 @@ outcomes on real calls (F120), and the window judge reads a spell-back confirmat
 (F121). They are reported by `compare` (Ada's own judge per run as `ada_did_pass`, and the judge
 quotes) and read as findings; they never decide the gate. A case that carries one is rewritten
 before its batch runs. A failures-first batch that clears earns the regression batch; a regression
-batch that clears earns the promotion question. On NO-GO, run `sim_harness.py reasons --batch <BATCH>`,
+batch that clears earns the promotion question. On NO-GO with near misses, run the top-up first and
+gate again. On any other NO-GO, run `sim_harness.py reasons --batch <BATCH>`,
 collect one reason per failing case from David (`AskUserQuestion`, your drafted reason first, his
-own through "Other"), and stop: the next step is a fix and one more
-failures-first batch, not more runs on the same change. The gate also records which changeset
+own through "Other", and whether it is a waiver, which writes `"waive": true`), and stop: the next
+step is a fix and one more failures-first batch, with no more runs on the same change. The gate also records which changeset
 and which clusters the batch tested. Record the verdict: `loop_status.py note 6c "gate GO 9 of 9"`
 (or NO-GO with its count).
 

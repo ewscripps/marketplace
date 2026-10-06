@@ -1,6 +1,6 @@
 {
   "name": "ada-tablo",
-  "version": "2.12.0",
+  "version": "2.13.0",
   "description": "Ada skills for the Tablo support instance: the weekly evidence loop (whole-population failure ranking with test-case verification of staged changes), scoped work sessions (/work), on-demand changeset reads (/changeset-inspect), playbook authoring (voice first, never deploys), deterministic-logic tool authoring (code tools and Answers Utility endpoints), config-health integrity checks on a live, staged or draft body, the deploy path (weekly-playbook-analysis Step 9), and the older weekly playbook, topics and coaching reviews.",
   "author": {
     "name": "STG Software Engineering Team"
