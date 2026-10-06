@@ -367,6 +367,8 @@ For new coaching to implement in Ada, choose the path based on whether the coach
 
 Most recommendations stem from a specific conversation. MCP creation requires anchoring to a coachable event in that conversation:
 
+Before staging a rule here, run the same three pre-staging steps listed under Option B below (coaching lint, the `search_coaching` overlap check, and the playbook's gate cases).
+
 1. **Pull the conversation** — warn the user first: `get_conversation` costs **~11k tokens**:
    ```
    get_conversation(conversation_id="<id>")
@@ -431,7 +433,7 @@ For abstract rules with no source conversation:
 Before staging a rule:
 1. Run `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/authoring_lint.py coaching --intent "..." --instruction "..."`. An error stops it.
 2. Run `search_coaching` with the intent's words and list every rule with a near-duplicate intent and the playbook it routes to. Two rules with the same scenario routing to different playbooks are resolved before staging.
-3. If the rule can fire inside a playbook, run that playbook's existing gate cases on the change and check `coaching_in_window` in the compare result.
+3. If the rule can fire inside a playbook, run that playbook's existing gate cases on the change and check `coaching_in_window` in the compare result. Ada's test-run transcripts have so far carried an empty `applied_coaching` on every turn, so an empty `coaching_in_window` is not evidence that no coaching fired; read the gate transcripts for the rule's wording.
 
 **Module Selection:**
 - **Planner:** Affects initial routing/playbook selection (most common)
