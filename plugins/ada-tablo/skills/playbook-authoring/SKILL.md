@@ -135,7 +135,7 @@ real defects on this instance, in order:
 
 1. **R1, one turn per physical step.** The step is one `ASK` (`when_to_ask: always`, contextual)
    that gives the instruction and asks about what the caller will see when it is finished: "unplug
-   the router, and tell me when its lights come back on." No `SEND` before it, and never ask the
+   the router, and tell me when its lights come back on." On voice, no `SEND` before it, and never ask the
    caller to say "done". At most two small actions per turn; check in only where there is something
    to see; the first ask always speaks the action (F326), and the re-prompt asks only about that
    result, never "Would you like to continue". There is
@@ -170,7 +170,7 @@ every voice playbook on a clear question before the exit (R12).
 First self-check the draft against Section B, rule by rule, and say which rules you checked and
 what you found. A silent pass is not a pass.
 
-Run `python3 evidence-loop/scripts/authoring_lint.py playbook --payload <payload.json>` on the
+Run `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/authoring_lint.py playbook --payload <payload.json>` on the
 dry-run payload. An error stops the stage. Each warning is fixed, or answered in one line in the
 spec.
 
