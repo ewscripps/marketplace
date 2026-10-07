@@ -184,15 +184,15 @@ identical case-for-case rather than eyeballing them.
 Set `direct_use: false` unless the reasoner should be able to call the tool unprompted. A
 validator invoked by a playbook step does not need direct use.
 
-## Step 7: Gates: config-health on the staged body, then the Step 9 test gate
+## Step 7: Checks: config-health on the staged body, then the Step 9 reach check
 
 **7a.** Invoke `/ada-tablo:config-health --changeset <id>` scoped to the playbook that will call
 the tool, so it reads the staged body. Resolve any P0 before going
 further; never test or promote on top of a known P0.
 
-**7b.** The test gate is `weekly-playbook-analysis` Step 9b, which runs `evidence-loop` step 6
-on this changeset: real failures as cases, failures first, 3 reps a case, `--changeset-only` for
-cases already measured on live. One test run is not evidence; the bench is non-deterministic.
+**7b.** The reach check is `weekly-playbook-analysis` Step 9b, which runs `evidence-loop` step 6
+on this changeset: real failures as cases, one paced rep per case on the change only, read on
+whether Ada reached the tool's step and used its result. The 72-hour production read is the verdict.
 Do not use `simulate_conversation` to verify a changeset — it evaluates live baseline state and
 cannot pin to a changeset.
 
@@ -296,7 +296,7 @@ Its `request_body` is only readable through the Ada REST API
 - Outputs' JMESPath `key` matches the returned dict keys exactly
 - Local case table green: happy path, malformed, empty, null, and the `NONE` fallback
 - Ported logic asserted identical against the original, case-for-case
-- `config-health --changeset` clean of P0; the Step 9 test gate GO at 3 reps a case
+- `config-health --changeset` clean of P0; the Step 9 reach check read, every case reaching the tool's step
 - Handed to `weekly-playbook-analysis` Step 9; the user confirmed the promote there
 - `ISSET` count checked 24h after promote
 - Readable source and variable contract committed to `ada-tablo-ops/reference/`

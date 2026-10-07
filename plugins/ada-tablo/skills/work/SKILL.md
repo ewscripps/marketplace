@@ -36,7 +36,7 @@ the done-when, today's date. Record the open in the registry, the title as the T
 Say an ID with its title, "W47 (Password Reset Fix)", every time. Then say two lines and nothing
 else:
 
-> W63 (Legacy Device Detection narrow reply). What changes for the customer: <one sentence, what Ada does differently for them>.
+> <W#> (<title>). What changes for the customer: <one sentence, what Ada does differently for them>.
 > This session: <the deliverable in one sentence, no IDs>. Done when: <the done-when in one sentence>.
 
 IDs (changeset, playbook, step) go in a third line starting `ref:` only when David must paste one.
@@ -67,9 +67,10 @@ IDs (changeset, playbook, step) go in a third line starting `ref:` only when Dav
   6d. A dry run always runs before the stage question so its lint output is in the question. A
   playbook's `sections` edit is too wide for a model tool call (F71), so the stage script builds
   it; the token is still bound to the exact payload, the stage still lands on a TESTING changeset,
-  and nothing here runs under standing approval. Every other write goes through
-  its owner: test cases and test runs through `evidence-loop`; any other config change, every
-  promote and every rollout through `weekly-playbook-analysis` Step 9. `sim_admin.py` deletes and
+  and nothing here runs under standing approval. Right after the stage lands, write its link so
+  every later message names the item: `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <CHANGESET-ID> --relation fixes --by david`.
+  The cases and the reach run go through `evidence-loop` step 6 on the same yes; any other config
+  change, every promote and every rollout go through `weekly-playbook-analysis` Step 9. `sim_admin.py` deletes and
   needs David's yes in the moment too.
   Run `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/stage_playbook.py EDIT [--variant V] [--changeset ID] [--confirm TOKEN]`.
   `EDIT` is `fts_voice`, `voice_connectivity`, `presales_pricing`, `ldd_fourthgen_exit`,
@@ -83,7 +84,7 @@ IDs (changeset, playbook, step) go in a third line starting `ref:` only when Dav
   `evidence-loop/scripts/playbook_flow.py`. The confirm flow, journal and TESTING landing stay
   the same; `config-health --draft PATH` reads the dry-run payload.
 - **Questions.** Two per cycle: the stage question and the launch question. A merge, a case
-  creation or a batch start never gets its own question; it rides on the stage question. A third
+  creation or a batch start rides on the stage question. A third
   question in a cycle is allowed only for a blocker David alone can clear (a device, a serial, a
   slot).
 - **Verify before claiming.** Run the check the done-when names and read its output. A reach run
@@ -146,10 +147,11 @@ When the done-when holds and you have read the verification output:
    - **An open decision already predicts this change's cluster and has no change attached**
      (`ledger.py open` shows "no change attached yet"): link it, with David's yes on which one.
      `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py link <decision-id> --changeset <CHANGESET-ID> --by david --note "<W#>"`
-   - **Otherwise, register one.** Take the prediction from the gate file the promotion used,
-     `~/.ada-evidence/tablo/stage-results/gate_<date>_<runs-batch>.json`, key `prediction`
-     (`cluster_key`, `metric`, `direction`, `threshold`, `horizon_weeks`). If the gate has no
-     prediction, ask David for one; never write one yourself. Take the baseline from the latest
+   - **Otherwise, register one.** Take the prediction David gave at the launch question
+     (evidence-loop step 6d: `cluster_key`, `metric`, `direction`, `threshold`, `horizon_weeks`),
+     or, for a change that went through the old gate, from its gate file
+     `~/.ada-evidence/tablo/stage-results/gate_<date>_<runs-batch>.json`, key `prediction`. With
+     neither, ask David for one; never write one yourself. Take the baseline from the latest
      measured window with `--baseline-window` so `register` checks it against the measured row.
      `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py register <promoted-date>-<slug> --changeset <CHANGESET-ID> --cluster-key <key> --metric <pct|count> --baseline-count <n> --baseline-denominator <d> --baseline-window <window-end> --target <threshold> --direction <down|up> --horizon-weeks <n> --promoted-at <ISO time> --by david --note "<what changed> (<W#>, gate <file>)"`
 
@@ -171,12 +173,12 @@ When the done-when holds and you have read the verification output:
    `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <CHANGESET-ID> --relation fixes --by david` (`--relation reads` for
    a decision), then `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py item <W#> --status done --by david`. A changeset or decision ID
    written into an open TODO line also gets its link row, or `doc_hygiene.py` flags it as bare.
-4. Say: "W63 (Legacy Device Detection narrow reply): done. <what is live or staged, one sentence,
+4. Say: "<W#> (<title>): done. <what is live or staged, one sentence,
    no IDs>. Deliverable complete, nothing pending." Add "N findings filed." if any. The message
    ends there: no next action, no suggestion, no offer.
 
 If the deliverable cannot be finished: write the blocker on the TODO line as `BLOCKED: <what>`,
 record it (`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py item <W#> --status blocked --by david`, and
 `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <blocker ID> --relation blocked_by --by david` when the blocker is a W,
-D or F item), clear `## Now`, say "W63 (Legacy Device Detection narrow reply): blocked on <what,
+D or F item), clear `## Now`, say "<W#> (<title>): blocked on <what,
 in plain words>. Nothing pending." and stop.

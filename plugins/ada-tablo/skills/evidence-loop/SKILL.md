@@ -392,9 +392,10 @@ removes a handoff or an exit, where David asks for it.
 
 **6a. Cases.** One case per behaviour the change fixes, built from the real conversations the
 work item names (`sim_harness.py convert`, or the drafts the authoring step proposed). 3 to 8
-cases. Show the opening line and the one thing each case checks, then ask once with
-`AskUserQuestion` (after `loop_status.py wait 6a "Create N test cases in Ada?"`): "Create these
-N test cases in Ada?" and run the `on_yes` it returns.
+cases. Show the opening line and the one thing each case checks. When a `work` session's stage
+question already listed these cases and David said yes, create them on that yes: run the `on_yes`
+the converter returns with no second question. Otherwise ask once with `AskUserQuestion` (after
+`loop_status.py wait 6a "Create N test cases in Ada?"`): "Create these N test cases in Ada?".
 
 **6b. Reach run.** One rep per case, on the change only, creates paced one every 90 seconds
 (the default):
@@ -404,8 +405,10 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py run --cases-f
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py compare --batch <BATCH> --wait
 ```
 
-Say the size before it starts: "N test conversations, about N x 1.5 minutes." A batch over 30
-voice runs needs David's confirm token, as before.
+Say the size before it starts: "N test conversations, about N x 1.5 minutes to create, then the
+calls themselves." Start the run in the background and wait for it to finish: 8 paced creates
+take over 10 minutes, past a foreground command's ceiling, and a run killed partway leaves cases
+uncreated. A batch over 30 voice runs needs David's confirm token, as before.
 
 **6c. Read.** `compare` prints which cases reached the change. For every case that reached it,
 read the transcript of that run (the test-run read the harness already caches) and check the new
@@ -415,16 +418,17 @@ changes (rule R15), and run 6b again for those cases only.
 Record `loop_status.py note 6c "reach N of M, words held on N"`.
 
 **6d. Launch.** Draft the deploy note (changeset-inspect skill, Deploy notes) and a prediction
-(cluster, metric, direction, threshold, horizon 1 week). Read the slots:
-`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py ready` lists the active
-rollouts; Ada allows 100% in total, so two 50% rollouts at once. Then `loop_status.py wait 6d
+(cluster, metric, direction, threshold, horizon 1 week). Read the slots from Ada itself:
+`list_agent_changesets(status="testing")`, and every changeset whose `rollout.status` is `active`
+holds a slot on its playbooks' channel; name each one by its work item (`registry.py show`). Ada
+allows 100% in total, so two 50% rollouts at once. Then `loop_status.py wait 6d
 "Launch, and how"` and one `AskUserQuestion` with these options, recommended first:
 - **50% rollout, capped** when this channel's slot is free: names the cap (600 voice, 1,000
   chat) and that the 72-hour read decides promote or stop.
 - **Promote at 100%** when the slot is taken and the change is a small chat fix (one or two
   steps, chat only): names that `revert` is the way back and the read is before against after.
-- **Wait for a slot** when the change is voice or a rewrite and the voice slot is taken: names
-  the changeset holding it and when its read is due.
+- **Wait for a slot** when this channel's slot is taken and the change is voice or a rewrite:
+  names the changeset holding the slot, its work item, and when its 72-hour read is due.
 - **Hold.**
 The note is written on his yes, then the hand-off to `weekly-playbook-analysis` Step 9 items 7
 and 8 for the call itself. The ledger row is registered at the `work` close with the prediction

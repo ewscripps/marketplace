@@ -291,10 +291,10 @@ edit_agent_behavior(
 ```
 This stages the removal on a TESTING changeset — nothing changes live yet. Stage only on the
 user's yes in the moment. Then hand the changeset to `weekly-playbook-analysis` Step 9 from its
-step 4: it verifies the diff, runs the test gate (`evidence-loop` step 6, 3 reps a case), shows
+step 4: it verifies the diff, runs the reach check (`evidence-loop` step 6, one paced rep per case), shows
 the user the draft deploy note (why, source, expected effect; see `changeset-inspect` Deploy
 notes), and promotes on the user's yes. `config-health` has no coaching checks, so for a coaching
-change the test gate is the only gate. This skill does not promote.
+change the reach check and the 72-hour production read are the only checks. This skill does not promote.
 
 If deprecation should instead mean "keep but stop firing" rather than delete outright, discuss
 the intended end state with the user first. Disable is a `modified` change setting `enabled` to
@@ -410,7 +410,7 @@ Before staging a rule here, run the same three pre-staging steps listed under Op
    | reply | conversation_id, generative_actions_event_id, intent, text |
    | action / process / search_knowledge / handoff / playbook | conversation_id, generative_actions_event_id, intent, chosen_id |
 
-5. **Hand off to the deploy path:** stage only on the user's yes in the moment, then hand the changeset to `weekly-playbook-analysis` Step 9 from its step 4. It verifies the diff, runs the test gate (`evidence-loop` step 6, 3 reps a case; `config-health` has no coaching checks), shows the draft deploy note (why, source, expected effect; see `changeset-inspect` Deploy notes) and promotes on the user's yes. This skill does not promote.
+5. **Hand off to the deploy path:** stage only on the user's yes in the moment, then hand the changeset to `weekly-playbook-analysis` Step 9 from its step 4. It verifies the diff, runs the reach check (`evidence-loop` step 6, one paced rep per case; `config-health` has no coaching checks), shows the draft deploy note (why, source, expected effect; see `changeset-inspect` Deploy notes) and promotes on the user's yes. This skill does not promote.
 
 6. The promoted changeset's edit list carries the new coaching ID — use it for the coaching_ids.md append below (no fishing it out of the UI).
 

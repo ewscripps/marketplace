@@ -1,6 +1,6 @@
 ---
 name: weekly-playbook-analysis
-description: The deploy path for Ada-Tablo behavior changes (Step 9). Stages an edit on a changeset through edit_agent_behavior, or takes one a stage script staged, checks the staged diff, gates it with config-health on the staged body and evidence-loop's 3-rep test gate, writes the deploy note, then promotes or starts a rollout on the user's yes. Other skills hand off here to deploy. Steps 0 to 8 are the older per-playbook weekly metrics review; the Friday whole-population review is evidence-loop.
+description: The deploy path for Ada-Tablo behavior changes (Step 9). Stages an edit on a changeset through edit_agent_behavior, or takes one a stage script staged, checks the staged diff, checks it with config-health on the staged body and evidence-loop's reach check, writes the deploy note, then promotes or starts a rollout on the user's yes. Other skills hand off here to deploy. Steps 0 to 8 are the older per-playbook weekly metrics review; the Friday whole-population review is evidence-loop.
 user-invocable: true
 allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/scripts/analyze_playbook_failures.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py note *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(mkdir *), Bash(cp *), Bash(ls *), Read, Grep, Glob, AskUserQuestion, Skill
 ---
@@ -330,7 +330,7 @@ For each approved change record:
    transcripts showed back to step 7.
 
 7. **Present the preview to the user** with Confirm/Cancel options (use AskUserQuestion) —
-   include the verified diff, the config-health verdict, the test-gate result, and the draft
+   include the verified diff, the config-health verdict, the reach-check result, and the draft
    deploy note (why, source, expected effect; see `changeset-inspect` Deploy notes). Say which
    of the two ways in step 8 is being asked for.
 
@@ -369,8 +369,8 @@ promote). A changeset already promoted can be walked back with `operation="rever
 ### Step 9b: Reach check
 
 The check before every promote or rollout is `evidence-loop` step 6: one rep per case on the
-change, paced, read on whether Ada reached the changed steps and said the new words. It is not a
-pass-rate gate; the 72-hour changeset-inspect read in production is the verdict on the change.
+change, paced, read on whether Ada reached the changed steps and said the new words. The
+72-hour changeset-inspect read in production is the verdict on the change.
 The old 3-rep gate (`sim_harness.py gate`) is run only when David asks for it, for a change that
 removes a handoff or an exit.
 
@@ -437,7 +437,7 @@ Match the read depth to the task shape:
 - Pull full transcripts (not SUMMARY) whenever the deliverable is a causal claim, and use a stronger model than Haiku for that read
 - Spot-check 3-4 cited conversations at full detail before repeating any confident causal claim from a subagent
 - Pull the live playbook body via `list_entities` before proposing any edit
-- Run `/ada-tablo:config-health --changeset <id>` on the staged body before the test gate
+- Run `/ada-tablo:config-health --changeset <id>` on the staged body before the reach check
 - Run the Step 9b reach check (evidence-loop step 6, one paced rep per case) on the changeset before promoting or rolling out
 - Send a playbook `sections` edit through its `scripts/stage_playbook.py` script, never through `edit_agent_behavior` from this skill
 - Read test-run transcripts for anything unexpected, not just the pass/fail verdict
@@ -448,7 +448,7 @@ Match the read depth to the task shape:
 **DON'T:**
 - Call `edit_agent_behavior` promote/revert/delete with `confirmed=true`, or `set_rollout`/`stop_rollout` at all, without the user's explicit sign-off in the moment
 - Test or promote a changeset while config-health has an open P0 on its staged body
-- Promote or roll out a changeset without its test gate or its deploy note
+- Promote or roll out a changeset without its reach check or its deploy note
 - Build a root-cause claim on `SUMMARY`-level conversation data, or repeat a subagent's causal claim unverified
 - Analyze more than 100-150 conversations at once (diminishing returns)
 - Pull full transcripts for pattern discovery (use summaries or CSV reasons)
