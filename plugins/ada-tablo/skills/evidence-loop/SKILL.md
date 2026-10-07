@@ -371,139 +371,60 @@ refused; ask for a percent. Every imported decision carries its goal and a resol
 approval on a cluster that does not translate and carries no goal is skipped with that reason:
 decide it again at step 5.5 with a goal option.
 
-## Step 6: Prove it before it ships
+## Step 6: Reach check, then launch
 
-Needs a changeset in `testing` status: David gives its id, or list them with
-`list_agent_changesets`. Before 6b, its staged body has a `config-health` pass with no P0
-(`Skill: config-health --changeset <ID>`, the one place every caller gates); if none is on record
-this session, run it, and a P0 stops step 6 here. Asking for it: `loop_status.py wait 6 "Name the changeset in testing"`,
-then `AskUserQuestion` with the testing changesets as options.
+Needs a changeset in `testing` status. Its staged body has a `config-health` pass with no P0
+(`Skill: config-health --changeset <ID>`); a P0 stops step 6 here. Asking for the changeset:
+`loop_status.py wait 6 "Name the changeset in testing"`, then `AskUserQuestion` with the testing
+changesets as options, each named by its work item and title (`registry.py show`).
 When nothing is in testing, `loop_status.py skip 6 6a 6b 6c 6d --reason "nothing in testing"`,
 ask David with `AskUserQuestion`, and on his yes run its `on_yes` and go to step 7.
 
-**6a. Real failures to test drafts.**
+A simulation here answers one question: does Ada reach the changed steps and say the new words.
+It never decides on a pass rate. Live Ada is measured in production, by the 72-hour read, so
+there is no live arm, no 3-rep gate, no reasons file, no waiver, no top-up and no separate
+regression batch. The old gate (`sim_harness.py gate`) is kept for one exception: a change that
+removes a handoff or an exit, where David asks for it.
+
+**6a. Cases.** One case per behaviour the change fixes, built from the real conversations the
+work item names (`sim_harness.py convert`, or the drafts the authoring step proposed). 3 to 8
+cases. Show the opening line and the one thing each case checks, then ask once with
+`AskUserQuestion` (after `loop_status.py wait 6a "Create N test cases in Ada?"`): "Create these
+N test cases in Ada?" and run the `on_yes` it returns.
+
+**6b. Reach run.** One rep per case, on the change only, creates paced one every 90 seconds
+(the default):
 
 ```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py convert --cluster-key "<KEY>" --limit 10
-```
-
-5 to 10 cases on a cluster of 100+, one per distinct failure mode. Show the drafts path and the
-first two drafts' opening message and criteria. Ask once with `AskUserQuestion`: "Create these N test cases in Ada?",
-after `loop_status.py wait 6a "Create N test cases in Ada?"`.
-
-```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py --format json convert --create <DRAFTS>
-```
-
-Run the `on_yes` command it returns.
-
-**6b. Run on live and on the change, three times each.**
-
-```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py run --cases-file <DRAFTS>.applied.jsonl --changeset <ID> --reps 3 --targets <ID,ID>
-```
-
-`--targets` names the cases the change claims to fix, and every other case in that batch is a
-regression case (step 6c). A cases file can carry the same thing as `"role": "target"` rows. With
-no targets named, every case in the batch is a target, which is right for a failures-first batch. `run` saves the batch record before its first
-create and splits the cases into creates of 10 (`--chunk`, default 10) with a 120-second pause
-between them (`--pause`, default 120), so a batch of several chunks can outlast a 10-minute
-foreground command: start it in the background and wait for it to finish.
-
-Size the batch before you start it. Voice runs are real simulated calls of several minutes, and
-Ada runs about 10 at a time with the rest queued (F102), so 160 voice runs take about two hours.
-- 3 reps, not 5. Queued runs finish: 0 of 70 were cut off in a queued batch, against about 40% when
-  runs started all at once (F89).
-- Cases already measured on live (a calibration floor, or a case from an earlier batch on the same
-  live body) run on the change only: add `--changeset-only`. Only new cases need the live arm.
-- Top up only through the `top_up` lines the gate prints (step 6c); they pool the new batch with the old one.
-- **Sizing a restage.** Rerun only the failing and inconclusive target cases. Rerun a regression
-  case only when the gate did not mark it `not_applicable` and an earlier run of it set one of
-  its `reached_vars` variables (a run that never reached the changed steps says nothing). Drop
-  `not_applicable` cases from the change's regression set.
-- Voice cases that carry a `bench` spec are scored on the playbook window, not by Ada's judge.
-- **Failures first.** When the change answers known failing cases, the first batch is only those
-  cases, 3 reps, `--changeset-only`, gated on its own with every case a target. The regression
-  batch (every other case for the playbook) runs only after the first batch clears, never in the
-  same batch and never before it. Gate the regression batch with
-  `sim_harness.py gate --batch <REGRESSION_BATCH> --pool <FAILURES_FIRST_BATCH> --targets <FAILURES_FIRST_CASE_IDS>`:
-  the two batches pool, the failures-first cases are targets, and the rest are regression cases
-  judged against live. Pooling needs the same changeset and no restage between the two batches; a
-  restage starts again from a failures-first batch.
-- **Voice ceiling: 30 runs a batch.** That is three rounds of 10 concurrent calls, under an hour.
-  Above 30 a voice batch returns `approval_required` exactly like a batch above 100 runs and does
-  not start without David's confirm token: ask David with `AskUserQuestion`, the number in the question, and run the `on_yes` command
-  only on his yes in the moment. State the batch size (cases x reps x arms) before every start.
-
-**6c. Read and gate.**
-
-```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py run --cases-file <DRAFTS>.applied.jsonl --changeset <ID> --changeset-only --reps 1 --note "<what the customer gets, one clause>"
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py compare --batch <BATCH> --wait
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py gate --batch <BATCH> --prediction '{"cluster_key":"<KEY>","metric":"pct","direction":"down","threshold":3.5,"horizon_weeks":1}'
 ```
 
-The bar is per case, and the rule depends on the case's role (rule `every_case_meets_its_rule`).
-GO needs every case to meet its rule, or every failing case waived and at least one case passing.
-- **Target cases** (named with `--targets` on `run`, or on `gate` to override the batch's list)
-  pass when every evidence-bearing run passes, or when at most 1 run fails in 6 or more pooled
-  runs. One failure in fewer than 6 runs is a near miss. A target the change never entered is a fail.
-- **Regression cases** (every other case) are judged against live on the same case. One blocks
-  when the change passes more than one run in three fewer than live (2 of 3 against live 3 of 3
-  passes; 1 of 3 against live 3 of 3 blocks), or passes under half its runs while live passes at
-  least half. A regression case that never entered the playbook on either arm is
-  `not_applicable` and is left out; if live entered it (this batch's live arm, or a compare on
-  disk that counts entry) and the change never did, it is a fail.
-- **Entry.** `entry_not_worse` fails when the change enters the playbook more than 0.34 below live
-  (the share of ended runs that entered). For a change meant to narrow when a playbook fires,
-  pass `--entry-drop-expected` and the check records as waived. The flag also skips the two
-  per-case entry fails above: each case is judged on its criteria, and a case left short of
-  evidence only because the change did not enter it reads `not_applicable`.
-- **No evidence.** A run that timed out or was cancelled, never entered the playbook, was cut off
-  before the playbook ended, had no spoken line in the playbook window, never set a `reached_vars`
-  variable of its case's bench spec, had an `action_executed` result that failed or was throttled
-  (429), or got no usable judge answer is `no_evidence`. It is neither a pass nor a fail. The gate
-  prints how many it left out per arm, and a case with fewer than 2 evidence-bearing runs on the
-  change arm is inconclusive and blocks GO.
-- **Disputed runs.** A run where our judge failed it, Ada's judge passed it, and a second judgment
-  of the same criteria passed is `disputed`. Read its transcript and record
-  `{"test_run_id": ..., "read": "pass"|"fail", "by": ..., "note": ...}` in
-  `sim/reads_<BATCH>.jsonl`. Until every disputed run has a row the check `disputed_runs_read`
-  fails and the case fails; a read that says pass counts as a pass. Each case in the gate output
-  also reports `judge_disputes`, the runs where our judge failed and Ada's passed.
-- **Near miss.** Before any restage, run the three `top_up` lines the gate prints: a `run` of the
-  near-miss cases with `--changeset-only --reps 3`, a `compare` of that new batch, and
-  `gate --batch <BATCH> --pool <NEW_BATCH>`, which carries the first gate's `--targets` and
-  `--entry-drop-expected` when it had them. A pooled batch must test the same changeset and must
-  have started after its last stage.
-- **Waiver.** A failing case is waived only by a row in the reasons file with a reason and
-  `"waive": true`. A reason alone records the failure and does not waive it, and a batch where no
-  case passed cannot be waived at all. A case that is inconclusive is never waived.
+Say the size before it starts: "N test conversations, about N x 1.5 minutes." A batch over 30
+voice runs needs David's confirm token, as before.
 
-For a voice change the bar is outcome criteria plus assertions only. A gate
-case's `judge_criteria` say what the caller ends up with (the serial captured, the offer asked
-before a transfer, no troubleshooting step given). Wording and repeat rules ("same thing twice",
-"never asks in the same words", "stops asking for the serial") never sit in a gate case's
-`judge_criteria`: live fails them at the same rate as the change (F119), repeats do not separate
-outcomes on real calls (F120), and the window judge reads a spell-back confirmation as a re-ask
-(F121). They are reported by `compare` (Ada's own judge per run as `ada_did_pass`, and the judge
-quotes) and read as findings; they never decide the gate. A case that carries one is rewritten
-before its batch runs. A failures-first batch that clears earns the regression batch; a regression
-batch that clears earns the promotion question. On NO-GO with near misses, run the top-up first and
-gate again. On any other NO-GO, run `sim_harness.py reasons --batch <BATCH>`,
-collect one reason per failing case from David (`AskUserQuestion`, your drafted reason first, his
-own through "Other", and whether it is a waiver, which writes `"waive": true`), and stop: the next
-step is a fix and one more failures-first batch, with no more runs on the same change. The gate also records which changeset
-and which clusters the batch tested. Record the verdict: `loop_status.py note 6c "gate GO 9 of 9"`
-(or NO-GO with its count).
+**6c. Read.** `compare` prints which cases reached the change. For every case that reached it,
+read the transcript of that run (the test-run read the harness already caches) and check the new
+words were said and the step did what the work item says. For a case that did not reach it, the
+case's opening or the step it should reach is wrong: fix the case, or restage with one or two
+changes (rule R15), and run 6b again for those cases only.
+Record `loop_status.py note 6c "reach N of M, words held on N"`.
 
-**6d. Promotion.** `sim_harness.py promote` is a stub and sends nothing. It re-runs the gate, so
-give it the same `--targets`, `--pool` and `--entry-drop-expected` the GO gate used; without them
-it judges a different case set, can read NO-GO, and overwrites the gate file. Show its summary and
-ask with `AskUserQuestion`: "Promoting is your call and it happens outside this loop." Before saying it:
-`loop_status.py wait 6d "Promote outside the loop, or not"`. If David wants to promote, hand
-off to `weekly-playbook-analysis` Step 9. Do not offer to enable the promote call. Before David
-promotes or starts a rollout, draft the deploy note, show it to him, ask with `AskUserQuestion` and write it on his yes (see
-the changeset-inspect skill, Deploy notes). No note, no promote.
+**6d. Launch.** Draft the deploy note (changeset-inspect skill, Deploy notes) and a prediction
+(cluster, metric, direction, threshold, horizon 1 week). Read the slots:
+`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py ready` lists the active
+rollouts; Ada allows 100% in total, so two 50% rollouts at once. Then `loop_status.py wait 6d
+"Launch, and how"` and one `AskUserQuestion` with these options, recommended first:
+- **50% rollout, capped** when this channel's slot is free: names the cap (600 voice, 1,000
+  chat) and that the 72-hour read decides promote or stop.
+- **Promote at 100%** when the slot is taken and the change is a small chat fix (one or two
+  steps, chat only): names that `revert` is the way back and the read is before against after.
+- **Wait for a slot** when the change is voice or a rewrite and the voice slot is taken: names
+  the changeset holding it and when its read is due.
+- **Hold.**
+The note is written on his yes, then the hand-off to `weekly-playbook-analysis` Step 9 items 7
+and 8 for the call itself. The ledger row is registered at the `work` close with the prediction
+from this question (F267).
 
 ## Step 7: Audit the bench (occasional)
 
@@ -580,6 +501,6 @@ David with `AskUserQuestion`: `loop_status.py skip 7 --reason "<why>"`, its `ask
 ## Settled (David, 2026-09-22)
 
 - D3: promotion stays manual, through `weekly-playbook-analysis` Step 9; the live promote call is not enabled.
-- D4: a failing test case is waived only by a reason with `"waive": true`; a reason alone records the failure. The bar is per case by role (step 6c), with no hard 100%.
+- D4 (applies to the old gate only, run on David's request): a failing test case is waived only by a reason with `"waive": true`; a reason alone records the failure. The bar is per case by role (step 6c), with no hard 100%.
 - D5: a decision whose evidence is not decisive at its horizon closes itself as "not enough evidence".
 - D7: voice test runs simulate the conversation (F48); there is no audio, so speech recognition, barge-in and keypad input are not tested.

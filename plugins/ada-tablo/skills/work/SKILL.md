@@ -75,12 +75,13 @@ else:
   driver's `EDITS` tuple. Shared tree helpers `index`, `clean`, `validate`, `flow_check` live in
   `evidence-loop/scripts/playbook_flow.py`. The confirm flow, journal and TESTING landing stay
   the same; `config-health --draft PATH` reads the dry-run payload.
-- **Verify before claiming.** Run the check the done-when names and read its output. One test run
-  is not evidence; the bench is non-deterministic, so 3 reps.
-- **Test sizing.** Batches follow `evidence-loop` step 6b: failures first, `--changeset-only` for
-  cases already measured on live, 3 reps, at most 30 voice runs a batch. One batch per session
-  unless the TODO line says otherwise. Say the size (cases x reps x arms) before the batch starts,
-  and on NO-GO stop at the reasons; the fix is the next session's deliverable.
+- **Verify before claiming.** Run the check the done-when names and read its output. A reach run
+  shows the change was reached and the words were said; the 72-hour production read is the verdict.
+- **Test sizing.** One reach run per cycle: 1 rep per target case, on the change only, creates
+  paced one every 90 seconds (the default). No live arm, no 3-rep gate, no separate regression
+  batch. Say the size before it starts. A case that did not reach the change is fixed, or the
+  change is restaged with one or two edits (R15), and only those cases run again. The old gate
+  runs only when David asks for it.
 - **Real calls before a rewrite.** A deliverable that rewrites or restages a voice playbook starts
   with a read of real calls through that playbook (`forensics_evidence.py`, 20 to 50 conversations)
   and names what the read changed in the draft, before any test run is spent (F100, F101).

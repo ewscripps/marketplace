@@ -325,8 +325,9 @@ For each approved change record:
    and resolve it, as its own change or folded into this one, before going further. Do not test
    or promote on top of a known P0.
 
-6. **Gate: test runs.** Before promoting or rolling out, run the test gate in Step 9b. Do not
-   promote on a regression.
+6. **Reach check.** Run evidence-loop step 6 on this changeset (cases, one paced rep each on the
+   change, transcript read of the runs that reached it). Bring its reach count and what the
+   transcripts showed back to step 7.
 
 7. **Present the preview to the user** with Confirm/Cancel options (use AskUserQuestion) —
    include the verified diff, the config-health verdict, the test-gate result, and the draft
@@ -365,57 +366,21 @@ If the user wants to walk back an edit before promoting, use
 discard the whole changeset before it's live, use `operation="delete"` (same confirm flow as
 promote). A changeset already promoted can be walked back with `operation="revert"`.
 
-### Step 9b: Test Gate
+### Step 9b: Reach check
 
-Run this before every promote or rollout — do not promote on the strength of the preview diff
-alone. One test run is not evidence: the bench is non-deterministic, so every case runs 3 times.
+The check before every promote or rollout is `evidence-loop` step 6: one rep per case on the
+change, paced, read on whether Ada reached the changed steps and said the new words. It is not a
+pass-rate gate; the 72-hour changeset-inspect read in production is the verdict on the change.
+The old 3-rep gate (`sim_harness.py gate`) is run only when David asks for it, for a change that
+removes a handoff or an exit.
 
-**The gate is `evidence-loop` step 6.** Invoke `Skill: evidence-loop` in targeted mode for the
-changed playbook and run its step 6 on this changeset: real failures converted to cases, the
-failures-first batch, 3 reps, `--changeset-only` for cases already measured on live, the voice
-ceiling, and its GO / NO-GO bar. Bring its gate verdict and batch id back to step 7.
-
-**Only when `evidence-loop` is not installed**, run the same gate by hand:
-
-1. `get_test_run_quota()` — confirm headroom for the day before creating runs.
-2. Identify the test cases relevant to the changed playbook(s) via `get_test_cases()`.
-3. Create test runs pinned to the changeset so they exercise the staged (not yet live)
-   config, 3 runs per case:
-   ```
-   edit_agent_config(
-     entity_type="test_run",
-     operation="create",
-     fields={"test_case_ids": ["<id>", ...], "changeset_id": "<id>"}
-   )
-   ```
-   (Call without `fields` first if the exact field names need confirming — this tool
-   discovers schemas the same way as `edit_agent_behavior`.)
-4. Poll `get_test_runs(test_run_id="<id>")` until `status` is `completed` (or `failed`/
-   `timeout`/`cancelled` — treat any of those as a blocked promote, investigate before
-   retrying).
-5. **Read the criteria results and, for anything unexpected, the transcript — not just the
-   pass/fail verdict.** The grader has produced misleading verdicts on this suite before
-   (e.g. penalizing a correct handoff offer as a false failure). A `did_pass: false` on a
-   criterion unrelated to the change under test is not necessarily a regression; a
-   `did_pass: true` is not proof the change works if the criteria don't actually probe it.
-6. Block promotion on any real regression relative to the pre-edit baseline for that test
-   case. `evidence-loop` step 6c applies the same rule: a regression case is judged against live
-   on the same case and blocks when the change passes more than one run in three fewer than live
-   (2 of 3 against live 3 of 3 passes; 1 of 3 against live 3 of 3 blocks), or passes under half
-   its runs while live passes at least half. Target cases (`--targets`) pass on every
-   evidence-bearing run, or at most 1 failure in 6 or more pooled runs. Surface the pass/fail
-   delta (not just raw counts) to the user in the step 7 preview.
-
-**Standing caveat:** Ada Simulations always execute Actions live against production —
-only Handoffs are mocked. There is no toggle to mock action calls; a field like
-`use_real_web_actions` on a test case is inert. Treat every test run as touching real
-downstream systems.
+**Standing caveat:** Ada Simulations always execute Actions live against production; only
+Handoffs are mocked. Treat every test run as touching real downstream systems.
 
 **Record it.** After a promote, the record is the deploy note and a ledger row, written only
-through `ledger.py register` or `ledger.py link`, with the prediction from the gate file (see the `work` skill, close step 1, for the exact commands; ask the user for a prediction when the gate has none, never write one yourself). A
-rollout has its deploy note and no ledger row until it is promoted. The Changes Deployed table
-in `playbook_baselines.md` is read only by Step 7; add a row there too only when Steps 0 to 8
-ran this session.
+through `ledger.py register` or `ledger.py link`, with the prediction David gave at the launch
+question. A rollout has its deploy note and no ledger row until it is promoted. After the 72-hour
+read (`Skill: changeset-inspect`), the rollout is promoted or stopped on David's yes.
 
 ## Step 10: Offer Next Steps
 
@@ -473,7 +438,7 @@ Match the read depth to the task shape:
 - Spot-check 3-4 cited conversations at full detail before repeating any confident causal claim from a subagent
 - Pull the live playbook body via `list_entities` before proposing any edit
 - Run `/ada-tablo:config-health --changeset <id>` on the staged body before the test gate
-- Run the Step 9b test gate (evidence-loop step 6, 3 reps) on the changeset before promoting or rolling out
+- Run the Step 9b reach check (evidence-loop step 6, one paced rep per case) on the changeset before promoting or rolling out
 - Send a playbook `sections` edit through its `scripts/stage_playbook.py` script, never through `edit_agent_behavior` from this skill
 - Read test-run transcripts for anything unexpected, not just the pass/fail verdict
 - Get explicit user confirmation before calling `edit_agent_behavior` with `confirmed=true`
