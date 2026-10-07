@@ -107,14 +107,14 @@ Name the failure this change is fixing, with one of:
 - A measured cluster from the evidence loop, with its window and denominator.
 - A `config-health` finding.
 
-**A rewrite or restage of a voice playbook also needs a read of real calls through it (F100).**
-20 to 50 live conversations that entered the playbook, read step by step: what the caller said at
-each ask, where they went silent, asked for a person or hung up. `/ada-tablo:work` runs it with
-`forensics_evidence.py` before handing off (F101); `evidence-loop` targeted mode can supply it; or
-read them here with `get_conversations` and `get_conversation`. Name which steps the read changed
-in the draft. A cluster or a `config-health` finding alone does not clear this gate for a rewrite,
-because the W2 FTS [Voice] rewrite was drafted without such a read and the first one (48 calls,
-2026-09-22) changed six steps of the staged payload.
+**A rewrite of a voice playbook needs a read of real calls through it (F100).** 20 to 50 live
+conversations that entered the playbook. The `work` session runs the bulk read with the Haiku
+fan-out in `forensics_evidence.py` (two readings per conversation, quote-checked) and reads in
+full only the ones it flags; name which steps the read changed in the draft. A cluster or a
+`config-health` finding alone does not clear this gate for a rewrite: the W2 FTS [Voice] rewrite
+was drafted without such a read and the first one (48 calls, 2026-09-22) changed six steps of the
+staged payload. A fix pass is not a rewrite: it reads the transcripts of the test runs that failed,
+which the harness already holds, and nothing more.
 
 A playbook edit with no evidence behind it is a guess. That is allowed, but it has to be said out
 loud: report "no evidence behind this, proceeding on request" and let the user decide. Do not
@@ -271,8 +271,8 @@ deploy path is `weekly-playbook-analysis` Step 9 and hand them the change record
   one at a time; never pull all seven.
 - `~/repos/ada-tablo-ops/reference/playbook_authoring_rules.md`: about 4k tokens, once per run.
 - `get_improvement_guide()`: once per session, never twice.
-- Conversation reads only for the Step 3 real-call read: at most 50 `get_conversation` calls a
-  session, none when `work` or `evidence-loop` already supplied the read.
+- Conversation reads: the Step 3 real-call read runs through the Haiku fan-out; the session itself
+  makes at most 5 `get_conversation` calls, and none for a fix pass.
 
 ## DO / DON'T
 

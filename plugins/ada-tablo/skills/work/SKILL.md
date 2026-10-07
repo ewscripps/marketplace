@@ -82,9 +82,12 @@ else:
   batch. Say the size before it starts. A case that did not reach the change is fixed, or the
   change is restaged with one or two edits (R15), and only those cases run again. The old gate
   runs only when David asks for it.
-- **Real calls before a rewrite.** A deliverable that rewrites or restages a voice playbook starts
-  with a read of real calls through that playbook (`forensics_evidence.py`, 20 to 50 conversations)
-  and names what the read changed in the draft, before any test run is spent (F100, F101).
+- **Real calls before a rewrite.** A deliverable that rewrites a playbook (a new body, or more than
+  a third of its steps) starts with a read of 20 to 50 real conversations through it. The bulk read
+  is the Haiku fan-out in `forensics_evidence.py` (each conversation read twice, quotes checked
+  against the transcript); the session itself reads only the 3 to 5 it flags, and names what the
+  read changed in the draft (F100, F101). A fix pass (one or two steps) reads the transcripts of
+  the reach runs or gate runs it already has, and nothing more.
 - **The ledger is written only through `ledger.py`.** The decision ledger, verifications and
   attribution files under `reference/history/` and `~/.ada-evidence/` are never edited by hand.
   This skill writes to them in one place, close step 1 below, with `ledger.py register` or
