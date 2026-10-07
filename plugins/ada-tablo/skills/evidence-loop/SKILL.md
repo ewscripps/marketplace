@@ -23,7 +23,11 @@ recorded, the options include your recommended draft, and his free-text answer t
 is what gets recorded, verbatim. Anything noticed that is not this step's output and meets the
 findings rule (measured harm or a broken check; the rule in full at Step 8) is a finding, filed in
 `~/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md` at step 8; everything else stays in the step's
-report. No recommendation, no investigation.
+report. No recommendation, no investigation. Every line David reads follows the message contract:
+the work item with its title first, then what the customer gets, then what was checked and found
+in words a support manager uses, then the one next action, with batch and changeset IDs on a last
+`ref:` line. Never "arm", "pool", "waive", "gate", a rule name or a finding number without its
+one-line meaning. A question's text follows the same order and fits in four sentences.
 
 **Why each rule exists** is in `REFERENCE.md` beside this file, by step. Read a section only
 when a step's output surprises you. Do not narrate it.

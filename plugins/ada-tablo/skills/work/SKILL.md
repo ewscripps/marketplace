@@ -36,8 +36,10 @@ the done-when, today's date. Record the open in the registry, the title as the T
 Say an ID with its title, "W47 (Password Reset Fix)", every time. Then say two lines and nothing
 else:
 
-> Deliverable: <the deliverable>.
-> Done when: <the done-when>.
+> W63 (Legacy Device Detection narrow reply). What changes for the customer: <one sentence, what Ada does differently for them>.
+> This session: <the deliverable in one sentence, no IDs>. Done when: <the done-when in one sentence>.
+
+IDs (changeset, playbook, step) go in a third line starting `ref:` only when David must paste one.
 
 ## 2. Do only that
 
@@ -169,10 +171,12 @@ When the done-when holds and you have read the verification output:
    `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <CHANGESET-ID> --relation fixes --by david` (`--relation reads` for
    a decision), then `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py item <W#> --status done --by david`. A changeset or decision ID
    written into an open TODO line also gets its link row, or `doc_hygiene.py` flags it as bare.
-4. Say: "Deliverable complete, nothing pending." Add "N findings filed." if any. The message
+4. Say: "W63 (Legacy Device Detection narrow reply): done. <what is live or staged, one sentence,
+   no IDs>. Deliverable complete, nothing pending." Add "N findings filed." if any. The message
    ends there: no next action, no suggestion, no offer.
 
 If the deliverable cannot be finished: write the blocker on the TODO line as `BLOCKED: <what>`,
 record it (`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py item <W#> --status blocked --by david`, and
 `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <blocker ID> --relation blocked_by --by david` when the blocker is a W,
-D or F item), clear `## Now`, say "Blocked on <what>. Nothing pending." and stop.
+D or F item), clear `## Now`, say "W63 (Legacy Device Detection narrow reply): blocked on <what,
+in plain words>. Nothing pending." and stop.
