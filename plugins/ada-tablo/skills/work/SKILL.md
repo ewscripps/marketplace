@@ -56,11 +56,16 @@ else:
   findings as numbered one-liners with verbatim text beside every ID. Report it to David in two
   sentences, never the transcript. **Re-resolve every Ada ID a sub-agent cites** before repeating
   or acting on it: run IDs and step IDs have been invented with the surrounding analysis correct.
-- **Ada writes from this skill: one kind only, a `scripts/stage_playbook.py` run.** Its allowed tools
-  cover the evidence-loop scripts, and a playbook's `sections` edit is too wide for a model tool
-  call (F71), so this skill runs the stage script: a dry run first, then the stage with the
-  script's fresh confirm token, on David's yes in the moment, every time. It never runs under
-  standing approval, and the change lands on a TESTING changeset. Every other write goes through
+- **Ada writes from this skill: a `scripts/stage_playbook.py` run, and the cases and reach run
+  that follow it, under one question.** A cycle asks David twice. The stage question names the
+  work item and title, what the customer gets, the step count before and after, the cases that
+  will be created (one line each) and the reach run's size, and carries the script's fresh confirm
+  token; on his yes the session merges the builder, stages, creates the cases and starts the reach
+  run, in that order, and stops on the first failure. The launch question is evidence-loop step
+  6d. A dry run always runs before the stage question so its lint output is in the question. A
+  playbook's `sections` edit is too wide for a model tool call (F71), so the stage script builds
+  it; the token is still bound to the exact payload, the stage still lands on a TESTING changeset,
+  and nothing here runs under standing approval. Every other write goes through
   its owner: test cases and test runs through `evidence-loop`; any other config change, every
   promote and every rollout through `weekly-playbook-analysis` Step 9. `sim_admin.py` deletes and
   needs David's yes in the moment too.
@@ -75,6 +80,10 @@ else:
   driver's `EDITS` tuple. Shared tree helpers `index`, `clean`, `validate`, `flow_check` live in
   `evidence-loop/scripts/playbook_flow.py`. The confirm flow, journal and TESTING landing stay
   the same; `config-health --draft PATH` reads the dry-run payload.
+- **Questions.** Two per cycle: the stage question and the launch question. A merge, a case
+  creation or a batch start never gets its own question; it rides on the stage question. A third
+  question in a cycle is allowed only for a blocker David alone can clear (a device, a serial, a
+  slot).
 - **Verify before claiming.** Run the check the done-when names and read its output. A reach run
   shows the change was reached and the words were said; the 72-hour production read is the verdict.
 - **Test sizing.** One reach run per cycle: 1 rep per target case, on the change only, creates
