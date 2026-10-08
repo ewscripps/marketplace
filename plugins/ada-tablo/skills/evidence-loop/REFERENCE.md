@@ -231,8 +231,14 @@ prediction sits on a cluster, never pick one yourself.
 that is the only moment both are in hand; it is what lets a verdict weeks later name the change
 instead of guessing at one. Nothing is sent to Ada; it is a line on disk.
 
-The bar (David, 2026-09-16, reworked by W95, 2026-10-06) is per case, by role, as `evidence-loop`
-step 6c states it: a target case passes on every evidence-bearing run (or at most 1 failure in 6 or
+The reach check replaced the per-case bar as the launch path (W97, David, 2026-10-07). Replayed
+on 63 historical batches, the bar read GO on 10; it read GO on 0 of 6 since 2026-10-06; an
+80%-true fix clears 3 of 3 runs 51% of the time; W7 took 17 gate runs to GO and was then rolled
+back after trailing control. A simulation now answers only whether Ada reached the change and
+said the new words, and the 72-hour production read is the verdict. The bar below runs only when
+David asks for the old gate, for example on a change that removes a handoff or an exit.
+
+The old bar (David, 2026-09-16, reworked by W95, 2026-10-06) is per case, by role: a target case passes on every evidence-bearing run (or at most 1 failure in 6 or
 more pooled runs), and a regression case is judged against live on the same case. A failing case
 is waived only by a reason with `"waive": true`; a reason alone records the failure. The bar is
 not a hard 100% (D4, David, 2026-09-22), because on a non-deterministic bench a hard 100% gives

@@ -38,7 +38,7 @@ missing, say so and stop.
 ## Step 0: Load the Rules
 
 For a rewrite or a new playbook, read the rules file in full. For a fix pass, do not load it: the stage
-dry run's lint enforces R1 to R15 and prints what it finds, and Section C's shape is already in the live
+dry run's lint enforces R1 to R16 and prints what it finds, and Section C's shape is already in the live
 body you are editing.
 
 ```
@@ -153,6 +153,8 @@ real defects on this instance, in order:
    facts and re-ask policy live elsewhere (a contextual SEND on chat, `general_instructions` for
    behaviour that spans steps).
 7. **R15, one or two fixes per pass** on a restage, each tied to a failing gate transcript.
+8. **R16, the step budget.** A body stays at 40 steps or fewer; the lint refuses a stage over 60,
+   and on a body already over 60 on live it refuses any stage that adds steps.
 
 **Customer-facing copy follows the project style guide, every word of it.** Plain language, no
 buzzwords, no em-dashes, no "it's not X, it's Y", no "Good news". Say why a step helps in one or two
