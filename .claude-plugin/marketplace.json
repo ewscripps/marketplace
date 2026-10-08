@@ -90,6 +90,7 @@
                 "./skills/evidence-loop",
                 "./skills/work",
                 "./skills/changeset-inspect",
+                "./skills/early-read",
                 "./skills/playbook-authoring",
                 "./skills/deterministic-logic",
                 "./skills/config-health",
