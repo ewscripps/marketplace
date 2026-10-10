@@ -14,50 +14,72 @@ horizon; nothing here closes, edits or judges a decision. Nothing here writes to
 ## Step 1: Read
 
 ```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py --format json read [--changeset <ID>] [--partial]
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py read [--changeset <ID>] [--partial]
 ```
 
+- The output is the text form, the one to report from. The stored row is still appended to the
+  readings file; `--format json` prints that row instead, for a machine step and for the
+  `rollout_compare` custom-metric rows.
 - No argument: every changeset promoted in the last 28 days, every active rollout, and every
   changeset an open decision names.
 - `--partial`: counts from the go-live time to now, ungraded conversations included. Refused
   once a full read is available (from the fifth UTC day after go-live); run a full read then.
 - The script appends one row per changeset to `reference/history/readings/<date>.jsonl`, each
   as soon as it is read.
+- Superseded changesets (a later edit replaced every step they added) are skipped and said in one
+  line: "1 superseded, frozen at its last reading" or "N superseded, frozen at their last reading".
+  `--changeset <ID>` still reads one by name.
+- `read --list` prints what a read would select, the superseded line and any playbook edited
+  outside a changeset, with no metric call.
+- Each read records the changeset's edit (step and tool ids, no text) in
+  `reference/history/edits.jsonl`; `edits --backfill` does it for every changeset the readings and
+  the registry name.
 - A cold run can take about 10 minutes. Run the command in the background and wait for it to
   finish before reporting.
 
 ## Step 2: Report
 
-Per changeset, 3 to 5 lines, plain words, numbers with denominators:
+Per changeset, 3 to 5 lines, plain words, numbers with denominators. Name every changeset by its
+registry title (one title per changeset); never print an id, a step id or a "+x points, range a to
+b". A result is counts with a verdict word: "73 of 87 chats resolved, before 50 of 85: up". Say
+the playbook edited outside a changeset, if the read printed one.
 
-1. Name, id, how it went live (promoted or rollout at N%), and why: the deploy note, or
+1. Title, how it went live (promoted or rollout at N%), and why: the deploy note, or
    "reason unknown" with Ada's summary.
 2. Windows compared.
 3. For a rollout, the A/B lines first (changeset against the rest of traffic, same channel,
-   same days). Then the headline lines with their intervals. `compare_changeset_metrics` only
+   same days), as "A/B voice: containment 30 of 40 on the change, 20 of 50 on the control: up".
+   Then the headline lines as `read` prints them: counts with a verdict word for a change with
+   both sides ("<playbook> voice: resolution 30 of 100 after, 20 of 100 before: up"); "new, no
+   before" or "was ... before, none after" for one side; "no data" when the channel has no line;
+   "no comparison" when a side has no conversations. The `headline_text` field and every delta's
+   interval stay in the stored row; none is repeated here.
+   `compare_changeset_metrics` only
    as secondary, saying its baseline is all channels. Each `custom_metric_pass_rate` row in
    `rollout_compare.metrics` is one more secondary line: `metric_name`, pass rate changeset
    against baseline, then pass, fail and not-applicable (`null_count`) counts per cohort from
    `counts`, marked "baseline is all channels". Ada gives no verdict on custom metrics, so none
    is printed.
-4. Any other line whose interval excludes zero, next to "N intervals computed", since about
-   1 in 20 does so by chance.
+4. Any other comparison that came out up or down, next to the run's "N of M comparisons clear of
+   chance, about X would be by chance" line, since about 1 in 20 comparisons clears by chance.
 5. The instance line for the same channel, other changes live or reverted in the same windows
    (same entity marked; a revert from `events`), the ungraded share on a partial read, and "early read, not a verdict".
 
 `wait`, skipped and error changesets: one line each.
 
 **The instance line (F393).** The whole instance moves too: across late September voice
-containment moved about +3 to +4pp and email +7 to +11pp with intervals that exclude zero. So
-read every entity delta against the instance delta for the same channel and window, and say
-both: "the playbook moved +4.0pp, all voice moved +3.5pp". When the entity delta has the same
-sign and falls inside the instance delta's interval, say the entity moved with the instance and
-the reading shows no effect of its own. Only a delta outside the instance interval, or of the
-opposite sign, is reported as the entity's own movement, and still as an early read.
+containment and email both moved up for the whole instance. So read every
+entity's verdict word against the instance's for the same channel and window, and say both, from
+the counts: "the playbook went up, 30 of 100 after against 20 of 100 before; all voice went up
+too, so the playbook moved with the instance". When the two words match, say the entity moved
+with the instance and the reading shows no effect of its own. Only an entity that went up or down
+while the instance word is "too early to tell" or the opposite, is reported as the entity's own
+movement, and still as an early read.
 
-**Chance across many intervals (F396).** At 95%, about 1 in 20 intervals excludes zero by
-chance. Before the per-changeset lines, say once for the run: "N intervals computed across M
-readings; about N/20 would exclude zero by chance", with N the sum of `intervals_computed`.
+**Chance across many comparisons (F396).** About 1 in 20 comparisons comes out up or down by
+chance. Before the per-changeset lines, say once for the run: "X of N comparisons clear of chance
+across M readings, about N/20 would be by chance", with N the sum of `intervals_computed` and X
+the count of those that came out up or down; `read` prints the same sentence under each reading.
 The same entity and channel headlining several readings whose after-windows overlap counts the
 same conversations more than once, so report it once, naming each reading it appears in; three
 readings agreeing there is one observation, not three.

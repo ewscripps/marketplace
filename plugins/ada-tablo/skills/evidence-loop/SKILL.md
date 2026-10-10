@@ -96,7 +96,7 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py --no-close
 Say: last run date, how many clusters moved more than chance explains, which predictions are
 due this run and which would close and how, and what was promoted since last time. If the
 seasonal banner is set, say so. `--no-close` previews; step 2b closes. Also say the CHANGESET
-SCOREBOARD SUM line with its interval, and how many open decisions lack a resolved-a-week
+SCOREBOARD SUM line as printed (counts and a verdict word), and how many open decisions lack a resolved-a-week
 prediction.
 
 ## Step 2: This week's conversations
@@ -137,6 +137,12 @@ or says plainly that none was attached. When other changes shipped in the same s
 an attached change is a candidate, never a cause. A decision that needs more weeks stays open and
 says how many; its verdict date is when the data should have enough conversations to see the change.
 
+The same run prints SUPERSEDED: an open decision whose attached change was replaced on the
+decision's playbook by a later edit is closed inconclusive with the replacing change named, the days
+of data it had and its last early read. Say each in one line. Under `--no-close` it prints WOULD
+CLOSE AS SUPERSEDED and closes nothing. Re-pointing is a new `ledger.py register` on the replacing
+change, by David.
+
 The same output prints WHICH CHANGE GOES WITH WHICH PREDICTION. `attached`: nothing to do.
 `NEEDS YOU`: more than one open prediction on that cluster; ask David which with
 `AskUserQuestion`, once. `changes nobody claimed` (promoted since the oldest open prediction and
@@ -156,14 +162,23 @@ change; report it, do not resolve it.
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py --from-pull ~/.ada-evidence/tablo/conversations_<MON>_<SUN>.jsonl --out-dir ~/.ada-evidence/tablo/stage-results
 ```
 
-No Ada call. The live set is the newest readings file (the `read` that step 0 starts in the
-background); the counts are this week's pull. A rollout is its change arm against its control, split
-by the export's `changeset_id`; a promotion is what it touched before against after it went live,
-less the rest of the channel. Every cell carries one label: on track, behind, regressing, too early
-or no goal. Say per changeset one line: its cells with numbers and denominators, and the label.
-Email in a week that ended under 72 hours ago is shown and labelled too early, never scored (F615).
-A cell with "the after window also holds" names the other changes on the same entity: say them.
-"early read, not a verdict".
+One listing call to Ada gives the live set (F711); the counts are this week's pull. `--no-ada`
+takes the live set from the readings on disk instead; when the run prints "Ada not read (...); live
+set from the readings on disk", say so in one line. A changeset with no reading yet is fetched
+once for its entities. A rollout is its change arm against its control, split by the export's
+`changeset_id`; a promotion is what it touched before against after it went live, less the rest of
+the channel. Say per changeset one line: its title, its status in words (live; live, a later change
+built on it; replaced by <title> on <date>; reverted; not measurable: why; live on a rollout; live, edit history not read yet), its
+cells as counts with a verdict word, and the label. Every cell carries one label: on track, behind,
+regressing, too early or no goal. A coaching rule's or tool's cell on a promoted change is Ada's own
+metric, labelled "Ada metric", since the pull carries no rule id; on a rollout such an entity is
+listed as not read. While a full read waits, a partial read's cells show as "partial read <date>,
+<n> conversations so far". "too early, readable on <date>" and "not measurable: <reason>" are
+different states; never merge them. A row credited nothing alone says "measured as part of a chain
+of N edits, nothing credited to it alone". Only live changes (active and stacked) are summed; the
+rest are listed with their reason. Email in a week that ended under 72 hours ago is shown and
+labelled too early, never scored (F615). A cell with "the after window also holds" names the other
+changes on the same entity: say them. "early read, not a verdict".
 
 **Loop run reads.** Every line under `## Loop run reads` in TODO is due on every run, whatever the
 day. A line whose date has passed or whose item is closed: say so in one line and skip it. Every
