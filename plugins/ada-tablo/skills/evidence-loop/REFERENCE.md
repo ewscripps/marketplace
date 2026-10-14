@@ -106,9 +106,24 @@ internal note after the call. About 5 fetches go into each conversation, which i
 `--max-gets` is capped at 60. Excerpts are written outside the repo and the redaction is regex,
 so names can survive.
 
-## Step 4c
+## Step 4d since W114: readers and one orchestrator
 
-**Why the question is David's.** "What went wrong here?" is the open-ended ask that was measured
+The one-question read was replaced on 2026-10-13 (W114, David: "we're asking a question in the
+dark"). On that day's run the three targets returned mostly "yes, it ended at the edited step"
+(W86 80 of 104 agreed, W47 18 of 23) and no cause; every cause came from the session's full
+reads. What W108, W109 and W111 did instead found the fixes: join each handed-off conversation
+to what a person did after, have Haiku readers record each conversation in plain terms (twice,
+quotes checked in code), and let one orchestrating agent read only those reports. The brief is
+David's (2026-10-13), an exception to the 2026-09-22 no-new-measurement-features rule. The join
+anchors a chat or email on its last message (F721: 9 of 127 W109 chats never joined on their
+start time). The voice leg is transcribed locally (mlx_whisper, about 25 calls a minute, no
+speaker labels, Tablo written as Tableau or Table); the speaker-confidence flags exist because
+the readers work out who is speaking. Every number the orchestrator returns is recounted in
+code and every quote it names is the readers' verified text; it cannot write a quote.
+
+## Step 4c, before W114
+
+**Why the question was David's.** "What went wrong here?" is the open-ended ask that was measured
 and abandoned: it produced over-calling (57 defect calls against 26 real ones) and, on one
 cluster, five invented conversation ids. A specific question written by the person who knows the
 product is what the reading is for. He approves each question, once; that is what keeps it

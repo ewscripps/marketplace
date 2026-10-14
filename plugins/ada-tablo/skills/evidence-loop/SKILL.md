@@ -12,9 +12,7 @@ One weekly run. Step 2b reads last week's changes first; steps 3 to 5.6 measure 
 verifies a change someone has already staged; a person promotes it. Every stage is built.
 `sim_harness.py promote` stops at a stub by design.
 
-**How to talk during the run.** Every script prints one JSON result (`--format json`). Read it,
-then say two sentences: what happened, and what this run does next. One number with its
-denominator when it matters. No entity IDs unless David must paste one; no statistics words.
+**How to talk during the run.** Every script prints three lines in text mode: what happened with its counts, what the run does next, and a `ref:` line with the page and the file. Repeat them; add nothing. `--format json` is for tests and the page, never for the run. What David reads in detail is on the page's This week tab; the terminal is where he answers. No entity IDs unless David must paste one; no statistics words.
 Every W, D or F ID you say or put in a question carries its title from the registry, "W47
 (Password Reset Fix)", and a changeset is said by its title ("CSAT Happy Paths"); `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py
 show <ID>` prints both. Every question to David goes through `AskUserQuestion`: up to 4 questions per call, 2 to 4
@@ -93,11 +91,7 @@ F238's, which sends step 2b's close to `--no-close`) applies at that step.
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py --no-close
 ```
 
-Say: last run date, how many clusters moved more than chance explains, which predictions are
-due this run and which would close and how, and what was promoted since last time. If the
-seasonal banner is set, say so. `--no-close` previews; step 2b closes. Also say the CHANGESET
-SCOREBOARD SUM line as printed (counts and a verdict word), and how many open decisions lack a resolved-a-week
-prediction.
+Say the three lines. The SUM line and the superseded closes are on the page's Changesets tab. `--no-close` previews; step 2b closes.
 
 ## Step 2: This week's conversations
 
@@ -114,8 +108,7 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py --instance 
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py --instance tablo
 ```
 
-Say: conversations read, and the top three failure clusters with their channel and share of that
-channel's non-escalated conversations. Keep the artifact path; step 5 needs it.
+Say the three lines. The channel bars are on This week. Keep the artifact path; step 5 needs it.
 
 ## Step 2b: Last week's changes
 
@@ -213,8 +206,7 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py series --k
 cluster key (`kind|channel|...`); it prints the top 8 clusters of that kind on that channel, so
 raise `--top` if the chosen cluster is not among them.
 
-Say, one sentence each: whether the week's change is mostly who escalates, how often Ada
-resolves, or channel mix; and whether the chosen cluster is a step change or a slow slide.
+Say the three lines.
 
 ## Step 3b: What is coaching doing
 
@@ -232,11 +224,11 @@ many rules the file tracks, and say the list may be incomplete. Finding
 missing rules is `reconcile_coaching_ids.py` (read-only without `--write`), outside the run. Do not
 propose a coaching edit here.
 
-## Step 4c: Up to three targets, one question each
+## Step 4c: Up to three targets
 
-The only step that asks David to decide mid-run. He approves one question per target, for up to
-3 targets, and never approves answers one conversation at a time. Targeted mode reads its one
-target the same way.
+The only step that asks David to decide mid-run. He approves up to 3 targets, and never approves
+answers one conversation at a time. No question is drafted (W114, David, 2026-10-13): the read at
+step 4d finds the pattern instead of guessing it. Targeted mode reads its one target the same way.
 
 ```bash
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py --artifact ~/.ada-evidence/tablo/triage_<MON>_<SUN>.json --run-date <TODAY>
@@ -244,70 +236,74 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py --artifa
 
 No Ada call and no model call; nothing is spent here. It reads step 2b's
 `changes_<MON>_<SUN>.json` from stage-results: a `regressing` line takes the first slot (rollouts
-first, then the largest loss) with a `drafted_question`, and is read like any target; it is decided
-as its change's question at step 2b, never at step 5.5. The first 3 on the shortlist
-(`read_at_4c: true`) are this week's reads; the rest are there to swap in. Say the shortlist in
-plain words: what each target is, how many conversations there are to read, and which way it
-moved. Topics, intents and playbooks rank on resolutions lost: this week's conversations times
-the drop from the 12 weeks before, with the 4-week figure, the range and how much of it is
-channel mix. Say the mix part: a drop that is mostly mix means more of the topic arrived by
-voice, where Ada resolves less, while each channel held its own rate. Coaching targets rank on
-Ada's figures; say how many rules could not be matched to this week's conversations. Every
-target carries `reaches_gate`: stage 5 ranks playbook failures and ended-unresolved reasons by
-count, gives a slot ahead of them to any playbook, reason, topic or intent target whose
-transcripts you read here, and scores playbook escalations separately, so only a reading of a
-coaching target cannot be approved at step 5.5. Say which targets are like that before David
-approves; what such a reading shows is filed at step 8 when it meets the findings rule. Nothing
-checks whether two of the 3 are the same conversations, such as a topic and one of its own
-intents.
+first, then the largest loss) and is read like any target; it is decided as its change at step
+2b, never at step 5.5. The first 3 on the shortlist (`read_at_4c: true`) are this week's reads;
+the rest are there to swap in. Say the three lines. The shortlist, the held items and every playbook and topic over the floor are on This week, sorted by lost a week. The question names each target in one line: name, conversations, resolved now against resolved before, and for voice the transcription minutes; the two options are read it (Recommended) and skip it. A coaching or failure-reason target cannot be approved at step 5.5; say so in its line.
 
-Then draft one question per target in David's terms, specific rather than broad ("did we ask
-for a serial when the problem was already obvious?" rather than "what went wrong?"), and
-written so each conversation answers it yes or no on its own: the reader returns one answer per
-conversation, not one for the group. For a regression target, start from its `drafted_question`,
-which is already in that form. One
-`AskUserQuestion` call holds all of them, one question per target: the target in a line, your
-drafted question, and two options, approve the question (Recommended) and skip this target. His
-own wording through "Other" is what goes into `--question` for that target, verbatim. A skipped
-target is not read. Before sending it: `loop_status.py wait 4c "Approve or replace up to 3
-questions"`.
+One `AskUserQuestion` call holds all of them, one question per target: the target in a line, and
+two options, read this target (Recommended) and skip it. A voice target says how many calls will
+be transcribed (about 25 calls a minute of wall clock, W108: 100 calls in 42 minutes). A skipped
+target is not read. Before sending it: `loop_status.py wait 4c "Approve up to 3 targets"`.
 
 ## Step 4d: Read and verify each target
 
 Steps 4 (a 20-conversation read of one cluster) and 4b (what a person did next) were folded in
-here on 2026-10-05 (W89): the reading below covers what step 4 read, and the Zendesk read is part
-of a target that hands off.
-
-Read each approved target on its own, one after the other, with its own sheet, its own
-answer and its own recorded reading. Never pool two targets on one sheet. `<KEY>` is repeated
-for each of the target's cluster keys, as in its `read_it_with`.
+here on 2026-10-05 (W89); the one-question read was replaced on 2026-10-13 (W114). Read each
+approved target on its own, one after the other, with its own run. Never pool two targets on one
+run. The `target_id` is on the shortlist.
 
 ```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py --cluster-key "<KEY>" --window <MON> <SUN>
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py --cluster-review <SHEET> --question "<David's words, verbatim>"
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/reader_orchestration.py run --target-id <TARGET_ID> --window <MON> <SUN> --run-date <TODAY>
 ```
 
-The sheet describes what ran, which asks went unanswered, which actions failed and which variables
-were set; it describes and never says why. The labeller of record is the code rule: Ada sent the
-identical message twice in a row. `--llm-label` is a measurement tool, not part of the run.
+What it does, in order, each step resumable from its file under
+`~/.ada-evidence/tablo/orchestration/<run>/` (`--from <step>` redoes from there):
 
-The sheet holds every conversation of a channel cluster under 150, else 120 of them; the fetch
-cap is that sample, so a target no longer shares 60 fetches across its channels. The question
-is asked of each conversation on its own, in groups of 10, and each conversation is read twice
-in two different groups. Say per target: how many conversations got the same answer both
-times (the agreement), then per channel cluster the agreed answers (yes, no, cannot tell, does
-not apply). A row whose quote is not words from that conversation is marked unsupported; say
-how many. Nothing combines the rows except code counting them.
+- **select**: the target's conversations, forensics' sample (every conversation of a channel
+  cluster under 150, else 120), transcripts cached once.
+- **join**: every handed-off conversation to what a person did after. Chat and email: the
+  Zendesk ticket by email, the match window anchored on the last message (F721). Voice: by phone
+  and call time, the agent's own leg. Zendesk is read-only and cached; `--max-gets` caps live GETs.
+- **transcribe** (voice): each agent leg's recording fetched once and transcribed locally with
+  mlx_whisper, no speaker labels. Say the leg count before it starts (the run prints it).
+- **read**: Haiku readers, every conversation twice in two groupings, one entry per
+  conversation: what the customer wanted, what they already tried, what Ada did and where it went
+  wrong, the agent's steps in order, whether the customer ended up working in their own words,
+  and a bucket: Ada could say it; Ada could do it with its own actions (account and registration
+  lookup, device status, password reset, order status); agent only (replacement, refund, other
+  back-end change, escalation); wanted a person. A conversation never handed off gets the same
+  read without the person fields. Every quote is checked in code against the part of the
+  conversation it is claimed from (Ada's words against Ada's lines, the agent's against the
+  agent's, the customer's against the customer's); on a call it also needs the reader's speaker
+  confidence. No reader sees a classifier field.
+- **orchestrate**: one agent (Sonnet) reads only those reports, never a transcript, and returns
+  per playbook the fixes that got customers working that Ada could give or do, the steps Ada
+  repeats that customers already tried, the fixes that needed a person, and a full-read list.
+  Code re-resolves every conversation it cites (an invented one is dropped and counted),
+  recounts from the readers' reports, keeps only quotes the readers' checks found, ranks the
+  fixes by customers working, and writes one brief per fix to `briefs/fix_N.md`. A code tally by
+  fix family is printed beside it; a large gap between the two is a reason to read more in full.
+
+Say the three lines per target. The reads block on This week shows conversations, handed off, joined, agreement and the ranked fixes once the run finishes.
 
 Then, for each target, read in full every conversation on the "Read these in full" list (every
-disagreement and 2 agreeing ones at random) and record what they showed. This is a gate, not a
-suggestion: the command refuses an id that is not in the cluster or has no transcript on disk,
-and refuses a reading that names none of that cluster's disagreements; stage 5 prints NOT
-VERIFIED against every finding with no row, on both tables; stage 5.5 refuses to approve one and
-its refusal prints this command.
-Reject and defer work without it. A model may describe and cite; cause is yours to establish.
-A reading is recorded against one cluster: the channel cluster the transcripts came from. Each
-recorded cluster is its own finding at step 5 and its own ledger row if David approves it.
+disagreement, every fix bucket whose quote was not found, every conversation not read twice, the
+orchestrator's own list, and 2 agreeing ones at random) and record what they showed. Open each
+one with its run, which prints the conversation as the readers saw it with its report, so every ID
+a reader or the orchestrator cites is re-resolved before it is repeated:
+
+```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/reader_orchestration.py show <RUN_DIR> <ID>
+```
+
+This is a gate, not a suggestion: the record command refuses an id that is not in the cluster or
+has no transcript on disk, and refuses a reading that names none of that cluster's disagreements;
+stage 5 prints NOT VERIFIED against every finding with no row, on both tables; stage 5.5 refuses to
+approve one and its refusal prints this command. Reject and defer work without it. A fix whose
+named conversations you did not open is not repeated. A model may describe and cite; cause is
+yours to establish. A reading is recorded against one cluster: the channel cluster the
+transcripts came from. Each recorded cluster is its own finding at step 5 and its own ledger row
+if David approves it. The run prints the command filled in:
 
 ```bash
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py --record-verification --cluster-key "<KEY>" --window <MON> <SUN> --conversation-ids <ID,ID,ID> --note "<what the transcripts showed>"
@@ -315,18 +311,6 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py --reco
 
 `--verified-by` defaults to `claude`; pass `--verified-by david` only for transcripts David opened
 himself.
-
-For a target whose conversations hand off, read what the human agent did next (Zendesk,
-read-only, capped; ask before raising `--max-gets`; `--excerpts` only if David asks to read the
-notes). Say how many sampled conversations became a ticket, and on how many a person wrote
-something. It is optional and never needs a skip.
-
-```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py --cluster-key "<KEY>" --window <MON> <SUN> --max-conversations 20 --max-gets 60
-```
-
-`--question-id <ID>` re-asks a question already on file in `reference/history/questions.jsonl`. It
-refuses a sheet on a channel the question was not written for; ask that channel with `--question`.
 
 ## Step 5: What it ranks
 
@@ -339,8 +323,17 @@ movement as the tie-breaker, each cluster read at step 4d taking a slot ahead of
 escalation findings scored against each channel's own handoff and resolution rate, ranked by how
 many times off its channel a playbook is. Above them, one line per channel (context, never a
 finding). Below them, where the handoffs sat by volume (where to work, never a ranking). Read
-both tables out and stop. Both tables are decided at the same gate and both block on the same
-missing transcript read. No cause claim, no config proposal.
+both tables out. Both tables are decided at the same gate and both block on the same missing
+transcript read.
+
+Then, under each finding read at step 4d, read out its ranked fix list from the run's
+`fixes.json`: the fix, its playbook, how many conversations, how many ended up working, and what
+Ada should say or do. Each fix is a candidate change with its brief at `briefs/fix_N.md`; when
+David approves the finding at step 5.5, that brief is what `Skill: playbook-authoring` starts
+from, passed as its path. The 2026-09-22 "no cause claim, no config proposal" line changed here on
+2026-10-13 (W114, David): the fix list names what a person gave that Ada could have given, with
+counts and verified quotes. The cause is still established by the full reads, and nothing is
+staged at this step.
 
 ## Step 5.5: David decides
 
