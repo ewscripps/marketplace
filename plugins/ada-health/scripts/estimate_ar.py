@@ -25,7 +25,7 @@ days (Sep 2 and Sep 3). For a single day pass the same date to both.
 import argparse, json, os, random, sys, urllib.request
 from math import sqrt
 
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "claude-haiku-5-5"
 MAX_TRANSCRIPT_CHARS = 12000
 
 RUBRIC = """You are replicating Ada's automated-resolution classifier.
