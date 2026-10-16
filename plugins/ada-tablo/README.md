@@ -12,7 +12,7 @@ Analysis skills for the Tablo Ada chatbot support system. Used by David and Laur
 | `/ada-tablo:config-health` | Standalone / pre-cutover / gate on a staged changeset or draft | Structural and behavioural integrity check — orphan variable reads, unbound action outputs, dangling references, null conflation, plus how the playbook behaves on a call: destructive warnings delivered with their own trigger, consecutive sends with no ask on voice, fixed messages carrying multi-step instructions, unguarded tool failure paths. Reads the live body, a staged changeset (`--changeset`) or a draft (`--draft`). Playbooks only. Read-only. |
 | `/ada-tablo:playbook-authoring` | On demand | Draft or revise a playbook against the measured authoring rules, voice first. Checks the draft with config-health, then hands a change record to `weekly-playbook-analysis` Step 9, or for a `sections` edit a build spec to a `scripts/stage_playbook.py` script. Never deploys. |
 | `/ada-tablo:deterministic-logic` | On demand | Move computable logic out of playbook prose into a code tool (sandboxed Python) or Answers Utility endpoint. Local case-table test, stage on a changeset, then the Step 9 gates and deploy. |
-| `/ada-tablo:evidence-loop` | Weekly (Fridays) | Whole-population failure ranking with 15 weeks of history, up to three targeted transcript reads David approves, one question each, an approval gate with pre-registered predictions, and test-case verification of a staged changeset (3 reps, gate GO/NO-GO). Writes only test cases and test runs. |
+| `/ada-tablo:evidence-loop` | Weekly (Fridays) | Whole-population failure ranking with 15 weeks of history, up to three targeted transcript reads David approves, an approval gate with pre-registered predictions, and a reach check on a staged changeset (one run per test case on the change: does Ada reach the new steps and say the new words). Writes only test cases and test runs. |
 | `/ada-tablo:changeset-inspect` | On demand | Early read of a live changeset's before and after numbers for the playbooks, coaching rules and tools it touched, from Ada's own grading. Read-only on Ada. Never a verdict. |
 | `/ada-tablo:work W#` | Any non-Friday session | Scoped work session on one item from the Ada-Evidence-Loop TODO. States the deliverable, does only that, files everything else as a finding, hands off to the owning skill, and stops with "Deliverable complete, nothing pending." |
 
@@ -26,7 +26,7 @@ Playbook, coaching, and topic edits go live through a **changeset** model on
 stage on a changeset, preview the diff, get explicit user confirmation, then promote. The
 older `propose_change` tool has been retired and no longer exists on the live MCP server.
 Before promoting or rolling out any playbook edit, run `/ada-tablo:config-health --changeset <id>`
-on the staged body and the test gate (evidence-loop step 6, 3 reps per case); see
+on the staged body and the reach check (evidence-loop step 7, one run per test case on the change); see
 `weekly-playbook-analysis` Step 9. A rollout (`set_rollout`) samples a share of new
 conversations up to a cap and has no confirm step, so it is asked first like a promote.
 

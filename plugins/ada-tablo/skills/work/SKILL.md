@@ -52,7 +52,7 @@ IDs (changeset, playbook, step) go in a third line starting `ref:` only when Dav
   - `Skill: deterministic-logic` to build or fix a code tool.
   - `Skill: config-health` to check a playbook's wiring and behaviour.
   - `Skill: evidence-loop` with `--cluster`, `--playbook` or `--topic` to read one cluster or to
-    test a staged change against real failures (its step 6).
+    test a staged change against real failures (its step 7).
 - **Sub-agents** are for a build, a config sweep, or bulk transcript reading. Ask for a
   three-part report: done or not done in one line; the verification command and its real output;
   findings as numbered one-liners with verbatim text beside every ID. Report it to David in two
@@ -64,12 +64,12 @@ IDs (changeset, playbook, step) go in a third line starting `ref:` only when Dav
   will be created (one line each) and the reach run's size, and carries the script's fresh confirm
   token; on his yes the session merges the builder, stages, creates the cases and starts the reach
   run, in that order, and stops on the first failure. The launch question is evidence-loop step
-  6d. A dry run always runs before the stage question so its lint output is in the question. A
+  8. A dry run always runs before the stage question so its lint output is in the question. A
   playbook's `sections` edit is too wide for a model tool call (F71), so the stage script builds
   it; the token is still bound to the exact payload, the stage still lands on a TESTING changeset,
   and nothing here runs under standing approval. Right after the stage lands, write its link so
   every later message names the item: `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <CHANGESET-ID> --relation fixes --by david`.
-  The cases and the reach run go through `evidence-loop` step 6 on the same yes; any other config
+  The cases and the reach run go through `evidence-loop` step 7 on the same yes; any other config
   change, every promote and every rollout go through `weekly-playbook-analysis` Step 9. `sim_admin.py` deletes and
   needs David's yes in the moment too.
   Run `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/stage_playbook.py EDIT [--variant V] [--changeset ID] [--confirm TOKEN]`.
@@ -105,7 +105,7 @@ IDs (changeset, playbook, step) go in a third line starting `ref:` only when Dav
   This skill writes to them in one place, close step 1 below, with `ledger.py register` or
   `ledger.py link`, for a changeset promoted while the session is open. Every changeset ID this
   session stages or promotes still goes on the HISTORY line at close; one staged but not
-  promoted is left for the Friday run's step 2b ("changes nobody claimed").
+  promoted is left for the Friday run's step 2 ("changes nobody claimed").
 
 ## 3. Findings
 
@@ -148,7 +148,7 @@ When the done-when holds and you have read the verification output:
      (`ledger.py open` shows "no change attached yet"): link it, with David's yes on which one.
      `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py link <decision-id> --changeset <CHANGESET-ID> --by david --note "<W#>"`
    - **Otherwise, register one.** Take the prediction David gave at the launch question
-     (evidence-loop step 6d: `cluster_key`, `metric`, `direction`, `threshold`, `horizon_weeks`),
+     (evidence-loop step 8: `cluster_key`, `metric`, `direction`, `threshold`, `horizon_weeks`),
      or, for a change that went through the old gate, from its gate file
      `~/.ada-evidence/tablo/stage-results/gate_<date>_<runs-batch>.json`, key `prediction`. With
      neither, ask David for one; never write one yourself. Take the baseline from the latest

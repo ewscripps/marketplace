@@ -10,19 +10,19 @@ Every script takes `--format json` and prints one result dict; the text view is 
 No statistics vocabulary ("kappa", "p-value", "power", "significant") in anything said to David;
 say "moved more than chance explains". No entity IDs unless he must paste one.
 
-## Step 1
+## Step 1b
 
-`--no-close` previews the closures; step 2b appends the verdict rows. The seasonal banner: Tablo
+`--no-close` previews the closures; step 2 appends the verdict rows. The seasonal banner: Tablo
 demand tracks the fall TV season and the holiday buying cycle, so inside a ramp broad simultaneous
 movement should be read as seasonal until shown otherwise, and no decision should be opened on a
 cluster whose movement is channel-wide.
 
-## Step 2b: last week's changes
+## Step 2: last week's changes
 
-Why it runs second. Three runs in a row (2026-09-28, 2026-10-02, 2026-10-05) collected data, read
+Why it runs second, right after the week is collected. Three runs in a row (2026-09-28, 2026-10-02, 2026-10-05) collected data, read
 targets and changed nothing in Ada. On 2026-10-05 the week's largest fact, the CSAT rollout
 regression (F637: Connectivity chat resolved 7 of 85 on the change arm against 21 of 99 on the
-control), was on the step 1 page at 13:03 UTC and acted on at 13:41, after two approvals were
+control), was in the run's briefing at 13:03 UTC and acted on at 13:41, after two approvals were
 written. Last week's changes are read before anything new is approved, and a regressing one holds
 new predictions on its channel until David decides it.
 
@@ -33,19 +33,21 @@ arm on this channel (D17); otherwise `changeset_id` baseline. Only playbooks and
 found in the export; a coaching rule's export id is not the rule's, so coaching and tools are listed
 as not read.
 
-Why email on a partial read is not scored (F615). Chat and voice are graded as they end (F391); email
-is graded days later, so in a week that ended under 72 hours ago most email is ungraded and the
-graded remainder is mostly handoffs: -39.3 points [-49.7, -27.7] from grading lag alone on
-2026-10-02. The cell is shown with its numbers and labelled too early.
+Why the last 72 hours are not read (F615, W126). Email is graded days after the conversation, so in
+a week that ended under 72 hours ago most email is ungraded and the graded remainder is mostly
+handoffs: -39.3 points [-49.7, -27.7] from grading lag alone on 2026-10-02. Since W126 the from-pull
+read cuts every channel at the full read's graded end, so both paths read the same days; a partial
+Ada read's email cell is still shown and labelled too early.
 
 Labels. regressing: resolution's 95% interval lies wholly below zero (above it, for a change
 expected to lower resolution), whatever the goal. on track or behind: against a goal in resolved
 conversations a week, from the deploy note (`note --expect "resolution up 12/wk on <id>/<channel>"`)
 or an open ledger decision on that changeset and channel. no goal: neither. too early: under 72
-hours live inside the week, a side with no conversations, no weekly pull on disk for the before
-window, or email on a partial read.
+hours live inside the week, under 3 graded days after the change or 15 conversations on a side
+(W126), a side with no conversations, no weekly pull on disk for the before window, or email on a
+partial Ada read.
 
-## Step 3: a topic that is not a cluster
+## Step 3a: a topic that is not a cluster
 
 A device, a platform or a brand name someone typed has its own kind: `customer_text` and
 `customer_text_x_playbook`, keyed on a small reviewed watchlist in `triage_evidence.py`. They get
@@ -69,11 +71,11 @@ a rule that fired zero times shows as zero instead of vanishing. Two things stil
 
 - Handoff coaching hands the customer to a person, so it is never recorded resolved. Its 0% is
   arithmetic, not a finding.
-- A rule that fires a lot and resolves almost nothing is a candidate for a step 4c read, not a
-  conclusion; stage 5 cannot rank a coaching cluster (FINDINGS F02). No coaching edit is
+- A rule that fires a lot and resolves almost nothing is a candidate for a step 5 read, not a
+  conclusion; step 6a cannot rank a coaching cluster (FINDINGS F02). No coaching edit is
   proposed from this skill.
 
-## Step 4d: which labeller counts
+## Step 5: which labeller counts
 
 The code rule is the labeller of record: if Ada sent the identical message twice in a row, that
 is a defect. It is six lines of Python and no model call. Scored against David's own labels on 74
@@ -85,7 +87,7 @@ out. `--llm-label` still exists and still scores, but it is a measurement tool, 
 run; do not offer it as a labeller.
 
 Model calls are spent on what code cannot see (a missing flow, a wrong route, wording) and that is
-steps 4c and 4d: up to 3 targets, one sharpened question each, each read on its own. Stage 3 describes
+steps 4 and 5: up to 3 targets, each read on its own. No question is drafted (W114, 2026-10-13). The forensics read describes
 and points; it does not decide what is a defect.
 
 Scoring the code rule against a sheet David has filled in:
@@ -94,19 +96,19 @@ Scoring the code rule against a sheet David has filled in:
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py --labels <SHEET>
 ```
 
-Pooling a `customer_text` cohort that stage 2 keys per channel:
+Pooling a `customer_text` cohort that step 1c keys per channel:
 `--cluster-key "customer_text|voice|outcome=not_resolved|term=roku" --cluster-key
 "customer_text|chat|outcome=not_resolved|term=roku"`. Each key is matched exactly; a typo raises
 with the near-miss keys for that one key.
 
-## Step 4d: what the human agent did next
+## Step 5: what the human agent did next
 
 Zendesk carries no call recordings text, so on voice the human-side record is the agent's
 internal note after the call. About 5 fetches go into each conversation, which is why
 `--max-gets` is capped at 60. Excerpts are written outside the repo and the redaction is regex,
 so names can survive.
 
-## Step 4d since W114: readers and one orchestrator
+## Step 5 since W114: readers and one orchestrator
 
 The one-question read was replaced on 2026-10-13 (W114, David: "we're asking a question in the
 dark"). On that day's run the three targets returned mostly "yes, it ended at the edited step"
@@ -121,7 +123,7 @@ speaker labels, Tablo written as Tableau or Table); the speaker-confidence flags
 the readers work out who is speaking. Every number the orchestrator returns is recounted in
 code and every quote it names is the readers' verified text; it cannot write a quote.
 
-## Step 4c, before W114
+## Step 4, before W114
 
 **Why the question was David's.** "What went wrong here?" is the open-ended ask that was measured
 and abandoned: it produced over-calling (57 defect calls against 26 real ones) and, on one
@@ -168,8 +170,8 @@ its conversations' reading; they show as read once.
 enforced it, so it was skipped and a third confident wrong cause reached a fix on 2026-09-18. It
 is now a gate: `--record-verification` refuses an id that is not in the cluster or has no
 transcript on disk, and, when the targeted read of that cluster and window has disagreements,
-refuses a reading that names none of them; stage 5 prints NOT VERIFIED against every finding
-with no row, and stage 5.5 will not approve one. Rejecting or deferring still works without it.
+refuses a reading that names none of them; step 6a prints NOT VERIFIED against every finding
+with no row, and step 6b will not approve one. Rejecting or deferring still works without it.
 A model may describe and cite; cause is yours to establish.
 
 **The default questions.** Without `--question` the command asks four fixed ones: what pattern,
@@ -178,7 +180,7 @@ cluster, weaker than a question David wrote. Questions are filed in
 `reference/history/questions.jsonl` so one can be re-asked on a later week and the two answers
 set side by side.
 
-## Step 5: two tables
+## Step 6a: two tables
 
 The ranked five cannot contain a handoff: voice hands off 75% of calls as a matter of course, so
 escalation clusters would take every slot. They are scored separately, against each channel's own
@@ -199,20 +201,20 @@ visible, because a table scored against 75% cannot ask whether 75% should be low
 handoffs sat" under the tables is a decomposition by volume: where to work if a channel is to
 improve, never a ranking, because the biggest playbook is biggest either way.
 
-Stage 5 makes no cause claim and proposes no config edit. Without `--artifact` it uses the newest
+Step 6a makes no cause claim and proposes no config edit. Without `--artifact` it uses the newest
 pull, which may be a two-day mid-week pull judged on a partial window with no matching history.
 
-## Step 5.5
+## Step 6b
 
 The `decide` call without confirm writes nothing: it prints the question and the exact `on yes`
 command with a token. Never construct a token. Nothing here touches Ada.
 
-Approval is refused without a recorded transcript read: see step 4c. A prediction on an
+Approval is refused without a recorded transcript read: see step 4, before W114. A prediction on an
 against-the-channel finding is refused because the ledger scores a cluster's recorded percentage,
 which for one of those rows is the playbook's share of the whole channel, not the rate the page
 shows, so the prediction would be stored in units nobody typed (David, 2026-09-21).
 
-## Step 5.6
+## Step 6c
 
 The horizon David types is the earliest look (W85, one week by default). The verdict date is the
 power weeks: the weeks of the cluster's volume the data needs to see the predicted change at 80%
@@ -224,7 +226,7 @@ imported decision carries `goal_resolved_per_week` and a resolved-a-week row, co
 cluster translates (a topic's unresolved share joined the failure kinds on 2026-10-05, so both
 2026-10-05 approvals translate), else the goal chosen at the gate.
 
-## Step 2b: closing
+## Step 2: closing
 
 Never soften "no change attached" into a hint that two things are connected. Eight changesets
 shipped between 2026-09-14 and 2026-09-17, four of them inside two hours, so one attached change
@@ -232,17 +234,17 @@ is a candidate and never a cause. "moved, short of target" replaced "CONFIRMED, 
 reached", and "reached, underpowered" replaced INCONCLUSIVE on a target already reached (W89
 Stage B): both verdicts were read as their opposite.
 
-## Step 2b: which change each prediction tested
+## Step 2: which change each prediction tested
 
 `ledger.py link` reads the changeset from Ada and refuses one that is not promoted. It appends a
 row and never edits the decision. If the link disagrees with a changeset already written on the
 decision row, the ledger records a conflict and credits neither. When more than one open
 prediction sits on a cluster, never pick one yourself.
 
-## Step 6
+## Step 7
 
-5 to 10 cases per cluster of 100+, one per distinct failure mode, not one per conversation
-(David, 2026-09-16). The gate records which changeset and which clusters the batch tested because
+One case per behaviour the change fixes, 3 to 8 in all (step 7b). One case per conversation was
+ruled out (David, 2026-09-16). The gate records which changeset and which clusters the batch tested because
 that is the only moment both are in hand; it is what lets a verdict weeks later name the change
 instead of guessing at one. Nothing is sent to Ada; it is a line on disk.
 
@@ -266,7 +268,7 @@ first real promotion (2026-09-21) was made from the session on David's explicit 
 two attempts were refused by the permission classifier; the intended path for the next one is
 `weekly-playbook-analysis` Step 9.
 
-## Step 7
+## Step 9a
 
 Ada's own "last run" grouping is unreliable: `get_test_cases(group_by_last_run=true)` files cases
 under `datetime: null` that have completed runs. The audit uses run history instead.

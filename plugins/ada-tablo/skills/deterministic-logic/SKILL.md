@@ -190,7 +190,7 @@ validator invoked by a playbook step does not need direct use.
 the tool, so it reads the staged body. Resolve any P0 before going
 further; never test or promote on top of a known P0.
 
-**7b.** The reach check is `weekly-playbook-analysis` Step 9b, which runs `evidence-loop` step 6
+**7b.** The reach check is `weekly-playbook-analysis` Step 9b, which runs `evidence-loop` step 7
 on this changeset: real failures as cases, one paced rep per case on the change only, read on
 whether Ada reached the tool's step and used its result. The 72-hour production read is the verdict.
 Do not use `simulate_conversation` to verify a changeset — it evaluates live baseline state and
