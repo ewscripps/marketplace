@@ -108,11 +108,16 @@ IDs (changeset, playbook, step) go in a third line starting `ref:` only when Dav
   promoted is left for the Friday run's step 2 ("changes nobody claimed").
 
 **Inside an evidence-loop run (step 7).** When the Friday run invoked this skill at its step 7,
-the run's status stays at `wait 7`. Leave an existing `## Now` item in OngoingWork in place, add
-this one beside it, and at close remove only this one. Stop after the stage lands and
-`registry.py link <W#> <CHANGESET-ID> --relation fixes` is written, then say "Deliverable
-complete, nothing pending." and return. The cases and the reach run belong to the run's steps 8b
-to 8d. Never invoke `evidence-loop` and never run `loop_status.py start`.
+the run's status stays at `wait 7`, and the close in section 4 changes as follows. Skip close
+steps 1 and 2: no ledger row, and the TODO line stays in TODO. Write the link with
+`registry.py link <W#> <CHANGESET-ID> --relation fixes --by david`, and leave the registry item
+and the TODO line open (no `--status done`). Leave an existing `## Now` item in OngoingWork in
+place, add this one beside it, and remove only this one, on the done path and on the blocked path.
+End with "<W#> (<title>): staged. Deliverable complete, nothing pending." and return. A hand-off to
+`weekly-playbook-analysis` Step 9 or `deterministic-logic` stops once the change is staged (Step 9
+items 1 to 3); the reach check, the deploy note and the launch question are the run's own steps 8b
+to 9. The cases and the reach run belong to the run's steps 8b to 8d. Never invoke `evidence-loop`
+and never run `loop_status.py start`.
 
 ## 3. Findings
 
@@ -187,5 +192,5 @@ When the done-when holds and you have read the verification output:
 If the deliverable cannot be finished: write the blocker on the TODO line as `BLOCKED: <what>`,
 record it (`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py item <W#> --status blocked --by david`, and
 `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <blocker ID> --relation blocked_by --by david` when the blocker is a W,
-D or F item), clear `## Now`, say "<W#> (<title>): blocked on <what,
+D or F item), clear `## Now` (inside an evidence-loop run, remove only this item's Now line), say "<W#> (<title>): blocked on <what,
 in plain words>. Nothing pending." and stop.

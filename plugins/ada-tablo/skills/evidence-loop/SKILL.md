@@ -46,7 +46,7 @@ one-line meaning. A question's text follows the same order and fits in four sent
 **Why each rule exists** is in `REFERENCE.md` beside this file, by step. Read a section only
 when a step's output surprises you. Do not narrate it.
 
-**Writes.** Never `edit_agent_behavior` or `edit_agent_config`. The only Ada writes are test-case
+**Writes.** Never `edit_agent_behavior` or `edit_agent_config`, except the stage made by step 7's work session, which is that skill's own write under its own question. The only other Ada writes are test-case
 and test-run creation through `sim_harness.py`. When a person must decide it returns
 `approval_required` with a token and an `on_yes` command: run `on_yes` verbatim, never build a
 token. Batches of 100 runs or fewer (30 for a voice batch) start without asking (David,
@@ -419,14 +419,17 @@ When every item has a fix, go to step 8a.
 
 Otherwise `loop_status.py wait 7 "Write a fix now, or go on?"` and one `AskUserQuestion`: at most
 the three items with the largest goals, plus "Go on to stage 8" (the tool allows 2 to 4 options).
-Each item option names the item, its title and its goal from the script's first line ("Write W84
+Offer only items that are open in the registry (`registry.py show <W#>`); an item routed to code
+is offered last. Each item option names the item, its title and its goal from the script's first line ("Write W84
 (App Viewing Chat) now, goal 7 resolved a week"), the first marked (Recommended). On an item:
 invoke `Skill: work` with that W#, inside the Friday run: it stops after the stage lands and its
 `fixes` link is written; the cases and the reach run are this run's steps 8b to 8d; it never
 invokes `evidence-loop` and never runs `loop_status.py start`. When it ends blocked,
 `loop_status.py note 7 "<W# (title)> blocked: <what>"` and go to step 8a. When it says
 "Deliverable complete", record `loop_status.py note 7 "<W# (title)> written and staged"` and go to
-step 8a with that changeset. On "Go on": step 8a with whatever is in testing. `--run <date>`
+step 8a with that changeset. When the work session ends with no changeset (a code-routed item, or
+an item that is no longer open), `loop_status.py note 7 "<W# (title)>: nothing to test"` and go to
+step 8a. On "Go on": step 8a with whatever is in testing. `--run <date>`
 replays an earlier run's plan and records nothing.
 
 ## Step 8: Prove it before it ships
