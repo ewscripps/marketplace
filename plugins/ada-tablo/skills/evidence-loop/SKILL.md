@@ -3,15 +3,16 @@ name: evidence-loop
 description: Weekly evidence loop for the Tablo Ada instance. Shows where Ada got worse this week from the whole conversation population, turns real failed conversations into Ada test cases, and checks a staged change against them before a person promotes it. Read-heavy; every write to Ada sits behind an explicit approval. Use for the Friday review, or mid-week with a cluster, playbook or topic to chase one thing.
 user-invocable: true
 argument-hint: '[--window START END | --cluster KEY | --playbook ID | --topic ID] [--no-pull]'
-allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(ls *), Bash(mkdir -p *), Read, Grep, Glob, Edit(/Users/181085/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md), AskUserQuestion, Skill
+allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/fix_check.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(ls *), Bash(mkdir -p *), Read, Grep, Glob, Edit(/Users/181085/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md), AskUserQuestion, Skill
 ---
 
 # Ada Evidence Loop (Tablo)
 
-One weekly run in nine stages, numbered 1 to 9 in run order; a stage with more than one step
+One weekly run in ten stages, numbered 1 to 10 in run order; a stage with more than one step
 letters them (1a, 1b, 1c). Stage 1 collects the week; stage 2 reads last week's changes before
-anything new is approved; stages 3 to 6 measure and decide; stage 7 verifies a change someone has
-already staged; at stage 8 a person ships it; stage 9 closes the run. Every stage is built.
+anything new is approved; stages 3 to 6 measure and decide; stage 7 checks that the week plan's
+fixes were written; stage 8 verifies a change someone has staged; at stage 9 a person ships it;
+stage 10 closes the run. Every stage is built.
 `sim_harness.py promote` stops at a stub by design.
 
 - **1 Collect the week**: 1a Preflight, 1b Where are we, 1c This week's conversations.
@@ -20,11 +21,12 @@ already staged; at stage 8 a person ships it; stage 9 closes the run. Every stag
 - **4 Choose targets**.
 - **5 Read and verify**.
 - **6 Rank and decide**: 6a What it ranks, 6b David decides, 6c Record the decisions.
-- **7 Prove it before it ships**: 7a the change in testing, 7b cases, 7c reach run, 7d read.
-- **8 Ship it**.
-- **9 Close the run**: 9a Audit the bench, 9b Record and stop.
+- **7 Write the fix**: the week plan's items, each with a change staged or not.
+- **8 Prove it before it ships**: 8a the change in testing, 8b cases, 8c reach run, 8d read.
+- **9 Ship it**.
+- **10 Close the run**: 10a Audit the bench, 10b Record and stop.
 
-The fix itself is written in a `work` session between stages 6 and 7, outside the run.
+The fix itself is written in a `work` session between runs; stage 7 checks it was.
 
 **How to talk during the run.** Every script prints three lines in text mode: what happened with its counts, what the run does next, and a `ref:` line with the page and the file. Repeat them; add nothing. `--format json` is for tests and the page, never for the run. What David reads in detail is on the page's This week tab; the terminal is where he answers. No entity IDs unless David must paste one; no statistics words.
 Every W, D or F ID you say or put in a question carries its title from the registry, "W47
@@ -33,8 +35,8 @@ show <ID>` prints both. Every question to David goes through `AskUserQuestion`: 
 options each, the recommended option first and marked (Recommended). Where his own words are
 recorded, the options include your recommended draft, and his free-text answer through "Other"
 is what gets recorded, verbatim. Anything noticed that is not this step's output and meets the
-findings rule (measured harm or a broken check; the rule in full at Step 9b) is a finding, filed in
-`~/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md` at step 9b; everything else stays in the step's
+findings rule (measured harm or a broken check; the rule in full at Step 10b) is a finding, filed in
+`~/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md` at step 10b; everything else stays in the step's
 report. No recommendation, no investigation. Every line David reads follows the message contract:
 the work item with its title first, then what the customer gets, then what was checked and found
 in words a support manager uses, then the one next action, with batch and changeset IDs on a last
@@ -57,7 +59,7 @@ Step 9.
 
 **Status page.** `loop_status.py` keeps a browser page in step with the run so David can see the
 phase without reading the output. Step 1a starts it. At the start of every step, before its first
-command, run `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py step <ID>` (IDs: 1a 1b 1c 2 3a 3b 4 5 6a 6b 6c 7a 7b 7c 7d 8 9a 9b).
+command, run `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py step <ID>` (IDs: 1a 1b 1c 2 3a 3b 4 5 6a 6b 6c 7 8a 8b 8c 8d 9 10a 10b).
 Just before any question to David, run `loop_status.py wait <ID> "<the ask in a few plain
 words>"`, then ask it with `AskUserQuestion`; the next `step` clears it. The project's
 `AskUserQuestion` hook (`loop_status.py ask-hook`) also records a wait on the current step with the
@@ -195,9 +197,9 @@ day. A line whose date has passed or whose item is closed: say so in one line an
 other line: read what it names from this week's pull and triage artifact, the cells above, or
 read-only from Ada, and report it in one or two sentences per item read, with numbers and
 denominators against the baseline the line gives. Say "not measurable this run" and why when a read
-cannot be done; never skip one silently. A read is a report. It is filed as a finding at step 9b only
+cannot be done; never skip one silently. A read is a report. It is filed as a finding at step 10b only
 when it shows new measured harm or a new broken check. Never edit TODO; a line that needs changing
-is asked of David with `AskUserQuestion` at step 9b. Report the CHANGESET SCOREBOARD this step's `brief_state.py`
+is asked of David with `AskUserQuestion` at step 10b. Report the CHANGESET SCOREBOARD this step's `brief_state.py`
 run printed (step 1b says only its SUM line), as printed, without recomputing it, and say "early
 read, not a verdict".
 
@@ -244,7 +246,7 @@ propose a coaching edit here.
 
 ## Step 4: Up to three targets
 
-David decides here, as he also does mid-run at steps 2, 6b, 7b and 8. He approves up to 3 targets, and never approves
+David decides here, as he also does mid-run at steps 2, 6b, 7, 8b and 9. He approves up to 3 targets, and never approves
 answers one conversation at a time. No question is drafted (W114, David, 2026-10-13): the read at
 step 5 finds the pattern instead of guessing it. Targeted mode reads its one target the same way.
 
@@ -401,14 +403,36 @@ refused; ask for a percent. Every imported decision carries its goal and a resol
 approval on a cluster that does not translate and carries no goal is skipped with that reason:
 decide it again at step 6b with a goal option.
 
-## Step 7: Prove it before it ships
+## Step 7: Write the fix
 
-**7a. The change in testing.** Needs a changeset in `testing` status. Its staged body has a `config-health` pass with no P0
-(`Skill: config-health --changeset <ID>`); a P0 stops step 7 here. Asking for the changeset:
-`loop_status.py wait 7a "Name the changeset in testing"`, then `AskUserQuestion` with the testing
+`loop_status.py step 7`, then:
+
+```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/fix_check.py
+```
+
+It reads the last run's week plan (`reference/history/loop-runs.jsonl`) and, per item, whether
+the registry holds a `fixes` link from it to a changeset (staged, in rollout or promoted). No Ada
+call. Say its three lines; record the first with `loop_status.py note 7 "<the first line>"`.
+When every item has a fix, go to step 8a.
+
+Otherwise `loop_status.py wait 7 "Write a fix now, or go on?"` and one `AskUserQuestion`: one
+option per item with none, largest goal first, each named with its title and goal ("Write W84
+(App Viewing Chat) now, goal 7 resolved a week"), the first marked (Recommended), and "Go on to
+stage 8". On an item: invoke `Skill: work` with that W# here, in this session; its own two
+questions stage the change, create the cases and start the reach run. When it says "Deliverable
+complete", record `loop_status.py note 7 "<W# (title)> written and staged"` and go to step 8a
+with that changeset. On "Go on": step 8a with whatever is in testing. `--run <date>` replays an
+earlier run's plan.
+
+## Step 8: Prove it before it ships
+
+**8a. The change in testing.** Needs a changeset in `testing` status. Its staged body has a `config-health` pass with no P0
+(`Skill: config-health --changeset <ID>`); a P0 stops step 8 here. Asking for the changeset:
+`loop_status.py wait 8a "Name the changeset in testing"`, then `AskUserQuestion` with the testing
 changesets as options, each named by its work item and title (`registry.py show`).
-When nothing is in testing, `loop_status.py skip 7a 7b 7c 7d 8 --reason "nothing in testing"`,
-ask David with `AskUserQuestion`, and on his yes run its `on_yes` and go to step 9a.
+When nothing is in testing, `loop_status.py skip 8a 8b 8c 8d 9 --reason "nothing in testing"`,
+ask David with `AskUserQuestion`, and on his yes run its `on_yes` and go to step 10a.
 
 A simulation here answers one question: does Ada reach the changed steps and say the new words.
 It never decides on a pass rate. Live Ada is measured in production, by the 72-hour read, so
@@ -416,14 +440,14 @@ there is no live arm, no 3-rep gate, no reasons file, no waiver, no top-up and n
 regression batch. The old gate (`sim_harness.py gate`) is kept for one exception: a change that
 removes a handoff or an exit, where David asks for it.
 
-**7b. Cases.** One case per behaviour the change fixes, built from the real conversations the
+**8b. Cases.** One case per behaviour the change fixes, built from the real conversations the
 work item names (`sim_harness.py convert`, or the drafts the authoring step proposed). 3 to 8
 cases. Show the opening line and the one thing each case checks. When a `work` session's stage
 question already listed these cases and David said yes, create them on that yes: run the `on_yes`
 the converter returns with no second question. Otherwise ask once with `AskUserQuestion` (after
-`loop_status.py wait 7b "Create N test cases in Ada?"`): "Create these N test cases in Ada?".
+`loop_status.py wait 8b "Create N test cases in Ada?"`): "Create these N test cases in Ada?".
 
-**7c. Reach run.** One rep per case, on the change only, creates paced one every 90 seconds
+**8c. Reach run.** One rep per case, on the change only, creates paced one every 90 seconds
 (the default):
 
 ```bash
@@ -436,20 +460,20 @@ calls themselves." Start the run in the background and wait for it to finish: 8 
 take over 10 minutes, past a foreground command's ceiling, and a run killed partway leaves cases
 uncreated. A batch over 30 voice runs needs David's confirm token, as before.
 
-**7d. Read.** `compare` prints which cases reached the change. For every case that reached it,
+**8d. Read.** `compare` prints which cases reached the change. For every case that reached it,
 read the transcript of that run (the test-run read the harness already caches) and check the new
 words were said and the step did what the work item says. For a case that did not reach it, the
 case's opening or the step it should reach is wrong: fix the case, or restage with one or two
-changes (rule R15), and run 7c again for those cases only.
-Record `loop_status.py note 7d "reach N of M, words held on N"`.
+changes (rule R15), and run 8c again for those cases only.
+Record `loop_status.py note 8d "reach N of M, words held on N"`.
 
-## Step 8: Ship it
+## Step 9: Ship it
 
 Draft the deploy note (changeset-inspect skill, Deploy notes) and a prediction
 (cluster, metric, direction, threshold, horizon 1 week). Read the slots from Ada itself:
 `list_agent_changesets(status="testing")`, and every changeset whose `rollout.status` is `active`
 holds a slot on its playbooks' channel; name each one by its work item (`registry.py show`). Ada
-allows 100% in total, so two 50% rollouts at once. Then `loop_status.py wait 8
+allows 100% in total, so two 50% rollouts at once. Then `loop_status.py wait 9
 "Launch, and how"` and one `AskUserQuestion` with these options, recommended first:
 - **50% rollout, capped** when this channel's slot is free: names the cap (600 voice, 1,000
   chat) and that the 72-hour read decides promote or stop.
@@ -462,16 +486,16 @@ The note is written on his yes, then the hand-off to `weekly-playbook-analysis` 
 and 8 for the call itself. The ledger row is registered at the `work` close with the prediction
 from this question (F267).
 
-## Step 9a: Audit the bench (occasional)
+## Step 10a: Audit the bench (occasional)
 
 ```bash
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py audit
 ```
 
 Say keep, rewrite and retire counts and the report path. To leave the audit out this week, ask
-David with `AskUserQuestion`: `loop_status.py skip 9a --reason "<why>"`, its `ask_first`, and its `on_yes` on his yes.
+David with `AskUserQuestion`: `loop_status.py skip 10a --reason "<why>"`, its `ask_first`, and its `on_yes` on his yes.
 
-## Step 9b: Record and stop
+## Step 10b: Record and stop
 
 1. Append every finding from this run to `~/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md`.
    A finding is filed only when it names measured harm (a count, a rate, named conversations) or a
@@ -537,6 +561,6 @@ David with `AskUserQuestion`: `loop_status.py skip 9a --reason "<why>"`, its `as
 ## Settled (David, 2026-09-22)
 
 - D3: promotion stays manual, through `weekly-playbook-analysis` Step 9; the live promote call is not enabled.
-- D4 (applies to the old gate only, run on David's request): a failing test case is waived only by a reason with `"waive": true`; a reason alone records the failure. The bar is per case by role (step 7d), with no hard 100%.
+- D4 (applies to the old gate only, run on David's request): a failing test case is waived only by a reason with `"waive": true`; a reason alone records the failure. The bar is per case by role (step 8d), with no hard 100%.
 - D5: a decision whose evidence is not decisive at its horizon closes itself as "not enough evidence".
 - D7: voice test runs simulate the conversation (F48); there is no audio, so speech recognition, barge-in and keypad input are not tested.

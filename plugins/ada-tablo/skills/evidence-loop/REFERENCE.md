@@ -241,9 +241,9 @@ row and never edits the decision. If the link disagrees with a changeset already
 decision row, the ledger records a conflict and credits neither. When more than one open
 prediction sits on a cluster, never pick one yourself.
 
-## Step 7
+## Step 8
 
-One case per behaviour the change fixes, 3 to 8 in all (step 7b). One case per conversation was
+One case per behaviour the change fixes, 3 to 8 in all (step 8b). One case per conversation was
 ruled out (David, 2026-09-16). The gate records which changeset and which clusters the batch tested because
 that is the only moment both are in hand; it is what lets a verdict weeks later name the change
 instead of guessing at one. Nothing is sent to Ada; it is a line on disk.
@@ -268,7 +268,7 @@ first real promotion (2026-09-21) was made from the session on David's explicit 
 two attempts were refused by the permission classifier; the intended path for the next one is
 `weekly-playbook-analysis` Step 9.
 
-## Step 9a
+## Step 10a
 
 Ada's own "last run" grouping is unreliable: `get_test_cases(group_by_last_run=true)` files cases
 under `datetime: null` that have completed runs. The audit uses run history instead.

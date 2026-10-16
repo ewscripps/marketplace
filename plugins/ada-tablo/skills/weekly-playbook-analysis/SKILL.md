@@ -260,7 +260,7 @@ ID format before Device Status was ever called.
 ## Step 9: Deploy Approved Edits via edit_agent_behavior
 
 This step is the deploy path for the other skills: `playbook-authoring`, `deterministic-logic`,
-`coaching-review` and `evidence-loop` step 8 hand off here. It can run on its own ("Step 9
+`coaching-review` and `evidence-loop` step 9 hand off here. It can run on its own ("Step 9
 only") on a change record or on a changeset that is already staged. Edits go live through
 `edit_agent_behavior`'s changeset model (the old `propose_change` tool no longer exists on the
 live server). Do NOT deliver paste-into-UI edit instructions.
@@ -325,7 +325,7 @@ For each approved change record:
    and resolve it, as its own change or folded into this one, before going further. Do not test
    or promote on top of a known P0.
 
-6. **Reach check.** Run evidence-loop step 7 on this changeset (cases, one paced rep each on the
+6. **Reach check.** Run evidence-loop step 8 on this changeset (cases, one paced rep each on the
    change, transcript read of the runs that reached it). Bring its reach count and what the
    transcripts showed back to step 7.
 
@@ -368,7 +368,7 @@ promote). A changeset already promoted can be walked back with `operation="rever
 
 ### Step 9b: Reach check
 
-The check before every promote or rollout is `evidence-loop` step 7: one rep per case on the
+The check before every promote or rollout is `evidence-loop` step 8: one rep per case on the
 change, paced, read on whether Ada reached the changed steps and said the new words. The
 72-hour changeset-inspect read in production is the verdict on the change.
 The old 3-rep gate (`sim_harness.py gate`) is run only when David asks for it, for a change that
@@ -438,7 +438,7 @@ Match the read depth to the task shape:
 - Spot-check 3-4 cited conversations at full detail before repeating any confident causal claim from a subagent
 - Pull the live playbook body via `list_entities` before proposing any edit
 - Run `/ada-tablo:config-health --changeset <id>` on the staged body before the reach check
-- Run the Step 9b reach check (evidence-loop step 7, one paced rep per case) on the changeset before promoting or rolling out
+- Run the Step 9b reach check (evidence-loop step 8, one paced rep per case) on the changeset before promoting or rolling out
 - Send a playbook `sections` edit through its `scripts/stage_playbook.py` script, never through `edit_agent_behavior` from this skill
 - Read test-run transcripts for anything unexpected, not just the pass/fail verdict
 - Get explicit user confirmation before calling `edit_agent_behavior` with `confirmed=true`

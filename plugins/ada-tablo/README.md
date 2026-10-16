@@ -26,7 +26,7 @@ Playbook, coaching, and topic edits go live through a **changeset** model on
 stage on a changeset, preview the diff, get explicit user confirmation, then promote. The
 older `propose_change` tool has been retired and no longer exists on the live MCP server.
 Before promoting or rolling out any playbook edit, run `/ada-tablo:config-health --changeset <id>`
-on the staged body and the reach check (evidence-loop step 7, one run per test case on the change); see
+on the staged body and the reach check (evidence-loop step 8, one run per test case on the change); see
 `weekly-playbook-analysis` Step 9. A rollout (`set_rollout`) samples a share of new
 conversations up to a cap and has no confirm step, so it is asked first like a promote.
 
