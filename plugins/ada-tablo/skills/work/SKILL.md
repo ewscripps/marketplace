@@ -64,7 +64,7 @@ IDs (changeset, playbook, step) go in a third line starting `ref:` only when Dav
   will be created (one line each) and the reach run's size, and carries the script's fresh confirm
   token; on his yes the session merges the builder, stages, creates the cases and starts the reach
   run, in that order, and stops on the first failure. The launch question is evidence-loop step
-  8. A dry run always runs before the stage question so its lint output is in the question. A
+  9. A dry run always runs before the stage question so its lint output is in the question. A
   playbook's `sections` edit is too wide for a model tool call (F71), so the stage script builds
   it; the token is still bound to the exact payload, the stage still lands on a TESTING changeset,
   and nothing here runs under standing approval. Right after the stage lands, write its link so
@@ -106,6 +106,13 @@ IDs (changeset, playbook, step) go in a third line starting `ref:` only when Dav
   `ledger.py link`, for a changeset promoted while the session is open. Every changeset ID this
   session stages or promotes still goes on the HISTORY line at close; one staged but not
   promoted is left for the Friday run's step 2 ("changes nobody claimed").
+
+**Inside an evidence-loop run (step 7).** When the Friday run invoked this skill at its step 7,
+the run's status stays at `wait 7`. Leave an existing `## Now` item in OngoingWork in place, add
+this one beside it, and at close remove only this one. Stop after the stage lands and
+`registry.py link <W#> <CHANGESET-ID> --relation fixes` is written, then say "Deliverable
+complete, nothing pending." and return. The cases and the reach run belong to the run's steps 8b
+to 8d. Never invoke `evidence-loop` and never run `loop_status.py start`.
 
 ## 3. Findings
 

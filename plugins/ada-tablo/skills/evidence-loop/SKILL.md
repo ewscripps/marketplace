@@ -26,7 +26,7 @@ stage 10 closes the run. Every stage is built.
 - **9 Ship it**.
 - **10 Close the run**: 10a Audit the bench, 10b Record and stop.
 
-The fix itself is written in a `work` session between runs; stage 7 checks it was.
+The fix itself is written in a `work` session between runs, or at stage 7 in the run, which checks it was.
 
 **How to talk during the run.** Every script prints three lines in text mode: what happened with its counts, what the run does next, and a `ref:` line with the page and the file. Repeat them; add nothing. `--format json` is for tests and the page, never for the run. What David reads in detail is on the page's This week tab; the terminal is where he answers. No entity IDs unless David must paste one; no statistics words.
 Every W, D or F ID you say or put in a question carries its title from the registry, "W47
@@ -414,16 +414,20 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/fix_check.py
 It reads the last run's week plan (`reference/history/loop-runs.jsonl`) and, per item, whether
 the registry holds a `fixes` link from it to a changeset (staged, in rollout or promoted). No Ada
 call. Say its three lines; record the first with `loop_status.py note 7 "<the first line>"`.
+When the script says no week plan is on file, record that line the same way and go to step 8a.
 When every item has a fix, go to step 8a.
 
-Otherwise `loop_status.py wait 7 "Write a fix now, or go on?"` and one `AskUserQuestion`: one
-option per item with none, largest goal first, each named with its title and goal ("Write W84
-(App Viewing Chat) now, goal 7 resolved a week"), the first marked (Recommended), and "Go on to
-stage 8". On an item: invoke `Skill: work` with that W# here, in this session; its own two
-questions stage the change, create the cases and start the reach run. When it says "Deliverable
-complete", record `loop_status.py note 7 "<W# (title)> written and staged"` and go to step 8a
-with that changeset. On "Go on": step 8a with whatever is in testing. `--run <date>` replays an
-earlier run's plan.
+Otherwise `loop_status.py wait 7 "Write a fix now, or go on?"` and one `AskUserQuestion`: at most
+the three items with the largest goals, plus "Go on to stage 8" (the tool allows 2 to 4 options).
+Each item option names the item, its title and its goal from the script's first line ("Write W84
+(App Viewing Chat) now, goal 7 resolved a week"), the first marked (Recommended). On an item:
+invoke `Skill: work` with that W#, inside the Friday run: it stops after the stage lands and its
+`fixes` link is written; the cases and the reach run are this run's steps 8b to 8d; it never
+invokes `evidence-loop` and never runs `loop_status.py start`. When it ends blocked,
+`loop_status.py note 7 "<W# (title)> blocked: <what>"` and go to step 8a. When it says
+"Deliverable complete", record `loop_status.py note 7 "<W# (title)> written and staged"` and go to
+step 8a with that changeset. On "Go on": step 8a with whatever is in testing. `--run <date>`
+replays an earlier run's plan and records nothing.
 
 ## Step 8: Prove it before it ships
 

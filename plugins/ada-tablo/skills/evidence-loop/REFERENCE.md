@@ -241,6 +241,15 @@ row and never edits the decision. If the link disagrees with a changeset already
 decision row, the ledger records a conflict and credits neither. When more than one open
 prediction sits on a cluster, never pick one yourself.
 
+## Step 7
+
+The fix is written between runs, against the plan that run recorded, so step 7 reads last run's
+week plan (`loop-runs.jsonl`), not a plan built today. A `fixes` link to any changeset counts as
+written: staged, in rollout and promoted all mean someone wrote the fix, and the kind word in the
+line says which. Nothing here calls Ada, because the plan and the links are files, so the step is
+free to run and to replay. `fix_check.py --run <date>` replays an earlier run's plan, prints the
+same three lines and writes no week file.
+
 ## Step 8
 
 One case per behaviour the change fixes, 3 to 8 in all (step 8b). One case per conversation was
