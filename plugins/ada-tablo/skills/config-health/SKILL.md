@@ -110,9 +110,15 @@ the other two):
 list_entities(entity_type="playbooks", entity_id="<playbook_id>")
 ```
 
-This returns `referenced_variables`, `referenced_actions`, `referenced_handoffs`,
-`referenced_playbooks`, and the full `sections[].steps[]` tree (recursive — `if_else` steps
-carry nested `branches[].steps[]`).
+Since 2026-10-02 this returns the playbook's top-level fields (`referenced_actions`,
+`referenced_handoffs`, `referenced_playbooks` among them) and `sections` with ids and titles
+only. Every step, every `general_instructions` chunk and every referenced variable arrives as a
+part-tagged entry in `items`, spread over pages behind `next_cursor`. Follow `next_cursor` until
+it is empty, then rebuild the body the way Ada's `usage_hint` says, as
+`evidence-loop/tests/ada_client.join_parts` does: join the `general_instructions` chunks in
+`chunk` order, collect `referenced_variable` ids into `referenced_variables`, and put each `step`
+under the section its `section_id` names. A check run on `sections` before that rebuild finds
+no steps. The rebuilt tree is recursive: `if_else` steps carry nested `branches[].steps[]`.
 
 It also returns three fields the behavioural checks depend on, all from this same call, so they need
 no extra requests:

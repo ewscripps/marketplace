@@ -134,12 +134,15 @@ Non-negotiable, because staging will not catch a logic error. Build a case table
 happy path, malformed input, empty, null, and the `ask` step's `fallback_value` (usually
 `NONE`) — a fallback arriving as a literal string is a real input.
 
-For a code tool, check the sandbox shape as well as the behavior:
+For a code tool, check the sandbox shape as well as the behavior. The skill has no Write tool,
+so paste the snippet into the script itself between the triple quotes:
 
 ```
 python3 - <<'PY'
 import ast
-src = open('snippet.py').read()
+src = r'''
+<paste the snippet here>
+'''
 tree = ast.parse(src)
 banned = tuple(t for t in (getattr(ast,n,None) for n in
               ('ClassDef','Delete','Yield','YieldFrom','Match')) if t)

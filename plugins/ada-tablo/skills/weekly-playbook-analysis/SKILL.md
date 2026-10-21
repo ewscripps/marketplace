@@ -353,7 +353,11 @@ For each approved change record:
    `set_rollout` has no preview and no confirm step: sampling starts on the call. So the
    AskUserQuestion in step 7 names the percentage and the cap, and the call is made only on
    that yes. Percentages across all active rollouts on the instance sum to at most 100, and a
-   request over that is rejected. The rollout ends when `max_conversations` is reached; calling
+   request over that is rejected. `max_conversations` counts every conversation sampled into
+   the rollout on every channel, including channels the change never touches (F654: a voice-only
+   change capped at 1,900 had 879 of 1,400 counted conversations on chat or email). Size the cap
+   for the arm the read needs: the calls the read needs on the changed channel, divided by that
+   channel's share of all conversations. The rollout ends when `max_conversations` is reached; calling
    `set_rollout` again resets the applied count to 0. Read progress with
    `list_agent_changesets(changeset_id="<id>")` (`rollout.status`, `rollout.applied_count`,
    `rollout.started_at`). To end it early, ask the same way, then

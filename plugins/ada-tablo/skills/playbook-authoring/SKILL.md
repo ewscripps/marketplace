@@ -86,8 +86,10 @@ Three fields matter as much as the step tree:
   tool cannot represent: treat it as unknown, say so, and do not assume.
 - `general_instructions` is the behaviour contract every step inherits, and the thing step
   instructions most often contradict (R10).
-- `on_human_request` / `on_off_topic` / `on_off_script` say whether the playbook has a knowledge exit
-  or is a dead end (R6).
+- `on_human_request` / `on_off_topic` / `on_off_script` say what the agent does when the customer
+  asks for a person, changes topic or asks a side question (A9). `search_knowledge` answers the
+  side question and resumes at the same step, so it is no exit from a gate; a gate's exit is its
+  own branch (R6).
 
 When drafting or revising troubleshooting, also read the comparator:
 
