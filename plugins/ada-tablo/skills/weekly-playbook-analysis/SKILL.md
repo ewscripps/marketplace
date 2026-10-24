@@ -331,11 +331,15 @@ For each approved change record:
 
 7. **Present the preview to the user** with Confirm/Cancel options (use AskUserQuestion) —
    include the verified diff, the config-health verdict, the reach-check result, and the draft
-   deploy note (why, source, expected effect; see `changeset-inspect` Deploy notes). Say which
-   of the two ways in step 8 is being asked for.
+   deploy note (why, source, expected effect, and the rubric the day-7 verdict read checks; see
+   `changeset-inspect` Deploy notes). Say which of the two ways in step 8 is being asked for.
 
 8. **Only after explicit user confirmation**, write the deploy note, then promote or roll out.
    No note, no promote, and no note, no rollout.
+   A promote or rollout start without a rubric is refused: write it first.
+   ```bash
+   python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py note --changeset <ID> --by david --source <W#,F#> --expect "<containment|resolution> <up|down> on <entity_id>/<channel>" --rubric "<check>" [--rubric "<check>" ...] --wrong-entrant "<test>" --ended-well-pct <N> --before-pct <N> [--gate <BATCH>] [--decision <DECISION-ID>] --note "<why it changed>"
+   ```
 
    **Promote** (live for every conversation):
    ```
@@ -373,8 +377,9 @@ promote). A changeset already promoted can be walked back with `operation="rever
 ### Step 9b: Reach check
 
 The check before every promote or rollout is `evidence-loop` step 8: one rep per case on the
-change, paced, read on whether Ada reached the changed steps and said the new words. The
-72-hour changeset-inspect read in production is the verdict on the change.
+change, paced, read on whether Ada reached the changed steps and said the new words. The day-7
+verdict read in production (`early_read.py verdict`, evidence-loop step 2) is the verdict on the
+change.
 The old 3-rep gate (`sim_harness.py gate`) is run only when David asks for it, for a change that
 removes a handoff or an exit.
 
@@ -383,8 +388,8 @@ Handoffs are mocked. Treat every test run as touching real downstream systems.
 
 **Record it.** After a promote, the record is the deploy note and a ledger row, written only
 through `ledger.py register` or `ledger.py link`, with the prediction David gave at the launch
-question. A rollout has its deploy note and no ledger row until it is promoted. After the 72-hour
-read (`Skill: changeset-inspect`), the rollout is promoted or stopped on David's yes.
+question. A rollout has its deploy note and no ledger row until it is promoted. After its day-7
+read (evidence-loop step 2), the rollout is kept, stopped or widened on David's yes.
 
 ## Step 10: Offer Next Steps
 

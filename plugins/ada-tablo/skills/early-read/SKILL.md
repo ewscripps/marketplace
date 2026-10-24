@@ -1,6 +1,6 @@
 ---
 name: early-read
-description: Early transcript read of a deployed Tablo Ada changeset, within hours of the promote or rollout start instead of the 72 hours Ada's grader needs. Pulls the conversations that entered the changeset's playbooks since it went live, has Haiku readers read each one twice against the change's own expectations (the deploy note and the work item's done-when), checks every quote against the transcript in code, counts the touched code tools and coaching rules in code, and lists the conversations the session must read in full before repeating anything. Read-only on Ada. Use when asked for an early read, a quick read or a transcript read of a change that just went live.
+description: Early transcript read of a deployed Tablo Ada changeset, within hours of the promote or rollout start instead of the 72 hours Ada's grader needs. Pulls the conversations that entered the changeset's playbooks since it went live, has Haiku readers read each one twice against the change's own expectations (the deploy note and the work item's done-when), checks every quote against the transcript in code, counts the touched code tools and coaching rules in code, and lists the conversations the session must read in full before repeating anything. Also runs the day-7 verdict read that a decision closes from (`early_read.py verdict`). Read-only on Ada. Use when asked for an early read, a quick read or a transcript read of a change that just went live, or for a change's verdict read.
 user-invocable: true
 argument-hint: 'CHANGESET-ID [W#]'
 allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_read.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Read, Grep
@@ -8,9 +8,38 @@ allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_re
 
 # Early read (Tablo)
 
-An early read, never a verdict. It answers "is the change doing what it was meant to, on real
-conversations" before Ada's grading is in; the 72-hour production read (`changeset-inspect`) is
-the verdict. Nothing here writes to Ada or to `reference/history/`.
+`read` is an early read, never a verdict. It answers "is the change doing what it was meant to,
+on real conversations" before Ada's grading is in; the day-7 `verdict` read below is the verdict.
+Nothing here writes to Ada; `read` writes nothing to `reference/history/`.
+
+## The verdict read (day 7)
+
+```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_read.py verdict --changeset <ID> --channel <voice|chat|email> \
+  [--decision <DECISION-ID>] [--check "<check>" ...] [--ended-well-pct <N>] [--before-pct <N>] \
+  [--since ISO] [--until ISO] [--voice-cap 200]
+```
+
+One read per change and channel: every conversation on that channel that entered the change's
+playbooks (or, with no playbook, fired its coaching rule or fetched its article) from the promote
+or rollout start to seven days after, or to now when the week is not over (the headline says
+partial week); a rollout is read on its change half only; chat and email are read whole and voice
+is sampled to `--voice-cap` (200) calls. Each conversation is read twice against the four standard
+questions (did it reach the changed step or rule; did Ada do or say the new thing; did the
+customer's problem end, by their own words or a tool's result; if it stopped without a goodbye, was
+the stop benign or a loss), then the deploy note's rubric checks (the `--check` lines when the note
+has none), with its wrong-entrant test first; wrong entrants are counted on their own line and are
+never part of the verdict. Code recommends worked when new behaviour is in at least 80% of those
+that reached the change and ended well meets the note's share (`--ended-well-pct`); did not work
+when new behaviour is under 50% of reached or ended well is under the week before launch
+(`--before-pct`); cannot tell otherwise, when fewer than 15 reached it, when no bars are on file, or
+when more than 20% of the conversations picked were not read.
+Ada's grade is shown beside the read and never decides. It prints three lines (the headline "New behaviour in N of M that reached it; the
+problem ended in K; Ada graded R resolved" with the recommendation, the full reads to do, where the
+row is), appends one row of counts and ids to `reference/history/verdict-reads/<date>.jsonl`, and
+keeps the transcripts under `~/.ada-evidence/tablo/verdict-reads/`. Read every listed conversation
+with `show` (Step 3) before the recommendation is repeated; the decision is closed by a person at
+evidence-loop step 2 (`ledger.py close <decision> --verdict <word> --read <read id> --by david`).
 
 `forensics_evidence.py --cluster-review` reads by cluster key from last Friday's triage, so it
 cannot read a change that went live mid-week. This reads by playbook since the go-live time.

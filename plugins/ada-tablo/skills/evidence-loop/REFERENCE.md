@@ -7,12 +7,13 @@ to say. Moved here from `SKILL.md` on 2026-09-22 so the runbook could be read in
 ## Output rules
 
 Every script takes `--format json` and prints one result dict; the text view is rendered from it.
-No statistics vocabulary ("kappa", "p-value", "power", "significant") in anything said to David;
+No statistics vocabulary ("kappa", "p-value", "significant") in anything said to David;
 say "moved more than chance explains". No entity IDs unless he must paste one.
 
 ## Step 1b
 
-`--no-close` previews the closures; step 2 appends the verdict rows. The seasonal banner: Tablo
+`--no-close` previews the superseded closes; step 2 writes them and closes the rest from their
+reads. The seasonal banner: Tablo
 demand tracks the fall TV season and the holiday buying cycle, so inside a ramp broad simultaneous
 movement should be read as seasonal until shown otherwise, and no decision should be opened on a
 cluster whose movement is channel-wide.
@@ -46,16 +47,6 @@ or an open ledger decision on that changeset and channel. no goal: neither. too 
 hours live inside the week, under 3 graded days after the change or 15 conversations on a side
 (W126), a side with no conversations, no weekly pull on disk for the before window, or email on a
 partial Ada read.
-
-## Step 3a: a topic that is not a cluster
-
-A device, a platform or a brand name someone typed has its own kind: `customer_text` and
-`customer_text_x_playbook`, keyed on a small reviewed watchlist in `triage_evidence.py`. They get
-the same channel split, history and `trend_evidence.py series` support as any structural cluster,
-and they are baseline rows David sees, never a ranked finding on their own (the same treatment as
-a variable cluster). Matching runs only over `inquiry_summary` and the customer's last message,
-never Ada's own coaching or article text. Matching the whole record is about four times too big,
-because it also catches Ada's own config talking about the term.
 
 ## Step 3b: coaching
 
@@ -132,7 +123,7 @@ product is what the reading is for. He approves each question, once; that is wha
 worth his time as the volume grows.
 
 **Why three targets (W80, 2026-10-02).** With one target a run, the 2026-10-02 run read Legacy
-Device Detection on voice, whose decision was flagged underpowered with a pre-trend of -1.71
+Device Detection on voice, whose decision was flagged as needing more data with a pre-trend of -1.71
 points a week, and the one-of-each-kind shortlist left Antenna & Channels (7.7 resolutions lost)
 out because Legacy & Migration (7.8) held the one topic slot. The three reads are now the three
 largest losses whatever their kind. Each is read and recorded on its own, so each reaches the
@@ -216,11 +207,10 @@ shows, so the prediction would be stored in units nobody typed (David, 2026-09-2
 
 ## Step 6c
 
-The horizon David types is the earliest look (W85, one week by default). The verdict date is the
-power weeks: the weeks of the cluster's volume the data needs to see the predicted change at 80%
-(David, 2026-10-05, changing W85 and the 2026-09-16 rule that power was reported and never acted
-on). A decision is still looked at from the earliest look, and the one-look rule holds an
-underpowered one open, so an early look cannot close it on chance. Predictions counted in
+A decision's verdict is read 7 days after its change goes live (loop verdict redesign, David,
+2026-10-23). Before that a decision waited for the weeks of data needed to see the predicted change:
+on 2026-10-23, 6 of 12 open decisions had dates in December and 12 of 16 closed ones were
+inconclusive. A verdict that waits on a number of weeks is ruled out. Predictions counted in
 conversations are refused because the verdict engine compares rates. The goal comes first: every
 imported decision carries `goal_resolved_per_week` and a resolved-a-week row, computed when the
 cluster translates (a topic's unresolved share joined the failure kinds on 2026-10-05, so both
@@ -230,9 +220,20 @@ cluster translates (a topic's unresolved share joined the failure kinds on 2026-
 
 Never soften "no change attached" into a hint that two things are connected. Eight changesets
 shipped between 2026-09-14 and 2026-09-17, four of them inside two hours, so one attached change
-is a candidate and never a cause. "moved, short of target" replaced "CONFIRMED, target NOT
-reached", and "reached, underpowered" replaced INCONCLUSIVE on a target already reached (W89
-Stage B): both verdicts were read as their opposite.
+is a candidate and never a cause.
+
+Why a read closes a decision and the rate does not (loop verdict redesign, David, 2026-10-23). 292
+of 292 readings on file said "early read, not a verdict", and every reading listed 13 to 34 other
+changes live in its window. Ada's grader is wrong in known ways for the changes shipped most: an
+in-app chat that closes after success is counted a failure (F797), and wrong entrants to a playbook
+whose tool never fires are counted against it. The read takes every entrant of the change's first 7
+days on one channel (voice sampled to 200), reads each twice against the four standard questions
+and the rubric fixed in the deploy note, and recommends: worked when new behaviour is in at least
+80% of those that reached the change and ended well meets the note's share; did not work when new
+behaviour is under 50% or ended well is under the week before launch; cannot tell between the bars
+or when fewer than 15 reached it. "Made it worse" is David's answer from the full reads; the script
+never recommends it. Wrong entrants are counted on their own line and are a routing question, never
+part of the verdict. The rate cells stay as a chart.
 
 ## Step 2: which change each prediction tested
 
@@ -243,11 +244,16 @@ prediction sits on a cluster, never pick one yourself.
 
 ## Step 7
 
-The fix is written between runs, against the plan that run recorded, so step 7 reads last run's
-week plan (`loop-runs.jsonl`), not a plan built today. A `fixes` link to any changeset counts as
-written: staged, in rollout and promoted all mean someone wrote the fix, and the kind word in the
-line says which. Nothing here calls Ada, because the plan and the links are files, so the step is
-free to run and to replay. `fix_check.py --run <date>` replays an earlier run's plan, prints the
+Step 7 checks what this run decided and what is ready to write: the W items step 6b approved
+(from `approvals_<date>.jsonl` or the registry rows written since the run started) and the open
+items `registry.py ready` lists with no `fixes` link (loop verdict redesign, 2026-10-23). Until then
+it read the last non-empty week plan, so a run that shipped was checked against an older plan. The week plan is the fallback when both are empty, which is why step
+10b records one every run. A `fixes` link to any changeset counts as written: staged, in rollout
+and promoted all mean someone wrote the fix, and the kind word in the line says which. An item has
+one active `fixes` link: the work skill removes the earlier one when it stages a replacement, and
+when more than one remains (W116 had five on 2026-10-23) the script names all of them and step 7
+asks which. Nothing here calls Ada, because the approvals, the plan and the links are files, so the
+step is free to run and to replay. `fix_check.py --run <date>` replays an earlier run, prints the
 same three lines and writes no week file.
 
 ## Step 8
@@ -261,11 +267,11 @@ The reach check replaced the per-case bar as the launch path (W97, David, 2026-1
 on 63 historical batches, the bar read GO on 10; it read GO on 0 of 6 since 2026-10-06; an
 80%-true fix clears 3 of 3 runs 51% of the time; W7 took 17 gate runs to GO and was then rolled
 back after trailing control. A simulation now answers only whether Ada reached the change and
-said the new words, and the 72-hour production read is the verdict. The bar below runs only when
+said the new words, and the day-7 read in production is the verdict. The bar below runs only when
 David asks for the old gate, for example on a change that removes a handoff or an exit.
 
 The old bar (David, 2026-09-16, reworked by W95, 2026-10-06) is per case, by role: a target case passes on every evidence-bearing run (or at most 1 failure in 6 or
-more pooled runs), and a regression case is judged against live on the same case. A failing case
+more runs taken together), and a regression case is judged against live on the same case. A failing case
 is waived only by a reason with `"waive": true`; a reason alone records the failure. The bar is
 not a hard 100% (D4, David, 2026-09-22), because on a non-deterministic bench a hard 100% gives
 either fake passes or a gate that is always red. For a voice change the bar is outcome criteria plus assertions

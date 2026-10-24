@@ -294,7 +294,7 @@ user's yes in the moment. Then hand the changeset to `weekly-playbook-analysis` 
 step 4: it verifies the diff, runs the reach check (`evidence-loop` step 8, one paced rep per case), shows
 the user the draft deploy note (why, source, expected effect; see `changeset-inspect` Deploy
 notes), and promotes on the user's yes. `config-health` has no coaching checks, so for a coaching
-change the reach check and the 72-hour production read are the only checks. This skill does not promote.
+change the reach check and the day-7 read in production are the only checks. This skill does not promote.
 
 If deprecation should instead mean "keep but stop firing" rather than delete outright, discuss
 the intended end state with the user first. Disable is a `modified` change setting `enabled` to

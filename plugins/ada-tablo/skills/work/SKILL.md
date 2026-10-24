@@ -69,6 +69,9 @@ IDs (changeset, playbook, step) go in a third line starting `ref:` only when Dav
   it; the token is still bound to the exact payload, the stage still lands on a TESTING changeset,
   and nothing here runs under standing approval. Right after the stage lands, write its link so
   every later message names the item: `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <CHANGESET-ID> --relation fixes --by david`.
+  When the item already has a `fixes` link to an earlier changeset for the same work, remove it:
+  `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <old changeset> --relation fixes --remove --by david`
+  (`registry.py show <W#>` lists the links), so the item has one active `fixes` link.
   The cases and the reach run go through `evidence-loop` step 8 on the same yes; any other config
   change, every promote and every rollout go through `weekly-playbook-analysis` Step 9. `sim_admin.py` deletes and
   needs David's yes in the moment too.
@@ -88,7 +91,7 @@ IDs (changeset, playbook, step) go in a third line starting `ref:` only when Dav
   question in a cycle is allowed only for a blocker David alone can clear (a device, a serial, a
   slot).
 - **Verify before claiming.** Run the check the done-when names and read its output. A reach run
-  shows the change was reached and the words were said; the 72-hour production read is the verdict.
+  shows the change was reached and the words were said; the day-7 read in production is the verdict.
 - **Test sizing.** One reach run per cycle: 1 rep per target case, on the change only, creates
   paced one every 90 seconds (the default). No live arm, no 3-rep gate, no separate regression
   batch. Say the size before it starts. A case that did not reach the change is fixed, or the

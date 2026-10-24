@@ -8,8 +8,9 @@ allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changese
 
 # Changeset inspect (Tablo)
 
-An early read, never a verdict. The decision ledger closes predictions with one test at their
-horizon; nothing here closes, edits or judges a decision. Nothing here writes to Ada.
+An early read, never a verdict. A decision closes from its day-7 verdict read (`early_read.py
+verdict`, evidence-loop step 2); nothing here closes, edits or judges a decision. Nothing here
+writes to Ada.
 
 ## Step 1: Read
 
@@ -102,16 +103,23 @@ The session that promotes a changeset or starts a rollout writes one before the 
 rollout call. No note, no promote.
 
 1. Draft it from the conversation: why the change was made (David's reason, in plain words), the
-   source W#/F#, the expected effect per entity and channel, and the gate batch and ledger
-   decision if there are any.
+   source W#/F#, the expected effect per entity and channel, the rubric, and the gate batch and
+   ledger decision if there are any. The rubric is what the day-7 verdict read checks on every
+   conversation beside its four standard questions (reached the change, did the new thing, ended
+   well, a benign stop): the change's own checks, one sentence each, judged from the messages
+   alone; a wrong-entrant test (who the change is not meant for); the ended-well share it must
+   reach (the W item's goal in resolved a week over the playbook's weekly volume, added to its
+   current share); and the share that ended well the week before launch, from triage.
 2. Show the draft next to the promote confirmation. David corrects it or says yes.
 3. On his yes, write it, then promote:
 
 ```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py note --changeset <ID> --by david --source <W#,F#> --expect "<containment|resolution> <up|down> on <entity_id>/<channel>" [--gate <BATCH>] [--decision <DECISION-ID>] --note "<why it changed>"
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py note --changeset <ID> --by david --source <W#,F#> --expect "<containment|resolution> <up|down> on <entity_id>/<channel>" --rubric "<check>" [--rubric "<check>" ...] --wrong-entrant "<test>" --ended-well-pct <N> --before-pct <N> [--gate <BATCH>] [--decision <DECISION-ID>] --note "<why it changed>"
 ```
 
-A note on a changeset not yet live records `live_kind: staged`; a read takes the live time from
-Ada. After a rollout starts, run the same command once more so the rollout start is recorded.
+A promote or rollout start without a rubric is refused: write it first. `--rubric` repeats, one
+check each; the two percents are 0 to 100. A note on a changeset not yet live records `live_kind:
+staged`; a read takes the live time from Ada. After a rollout starts, run the same command once
+more, rubric included, so the rollout start is recorded.
 `--expect` sets the headline lines of every later read, so name the entity and channel the change
 is meant to move. A reverted changeset is refused.

@@ -3,25 +3,25 @@ name: evidence-loop
 description: Weekly evidence loop for the Tablo Ada instance. Shows where Ada got worse this week from the whole conversation population, turns real failed conversations into Ada test cases, and checks a staged change against them before a person promotes it. Read-heavy; every write to Ada sits behind an explicit approval. Use for the Friday review, or mid-week with a cluster, playbook or topic to chase one thing.
 user-invocable: true
 argument-hint: '[--window START END | --cluster KEY | --playbook ID | --topic ID] [--no-pull]'
-allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/fix_check.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(ls *), Bash(mkdir -p *), Read, Grep, Glob, Edit(/Users/181085/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md), AskUserQuestion, Skill
+allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_read.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/fix_check.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(ls *), Bash(mkdir -p *), Read, Grep, Glob, Edit(/Users/181085/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md), AskUserQuestion, Skill
 ---
 
 # Ada Evidence Loop (Tablo)
 
 One weekly run in ten stages, numbered 1 to 10 in run order; a stage with more than one step
 letters them (1a, 1b, 1c). Stage 1 collects the week; stage 2 reads last week's changes before
-anything new is approved; stages 3 to 6 measure and decide; stage 7 checks that the week plan's
-fixes were written; stage 8 verifies a change someone has staged; at stage 9 a person ships it;
+anything new is approved; stages 3 to 6 measure and decide; stage 7 checks that the approved and ready
+items have their fixes written; stage 8 verifies a change someone has staged; at stage 9 a person ships it;
 stage 10 closes the run. Every stage is built.
 `sim_harness.py promote` stops at a stub by design.
 
 - **1 Collect the week**: 1a Preflight, 1b Where are we, 1c This week's conversations.
 - **2 Check last week's changes**.
-- **3 Find the failures**: 3a Is this new, 3b What is coaching doing.
+- **3 Find the failures**: 3b What is coaching doing.
 - **4 Choose targets**.
 - **5 Read and verify**.
 - **6 Rank and decide**: 6a What it ranks, 6b David decides, 6c Record the decisions.
-- **7 Write the fix**: the week plan's items, each with a change staged or not.
+- **7 Write the fix**: the approved and ready items, each with a change staged or not.
 - **8 Prove it before it ships**: 8a the change in testing, 8b cases, 8c reach run, 8d read.
 - **9 Ship it**.
 - **10 Close the run**: 10a Audit the bench, 10b Record and stop.
@@ -59,7 +59,7 @@ Step 9.
 
 **Status page.** `loop_status.py` keeps a browser page in step with the run so David can see the
 phase without reading the output. Step 1a starts it. At the start of every step, before its first
-command, run `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py step <ID>` (IDs: 1a 1b 1c 2 3a 3b 4 5 6a 6b 6c 7 8a 8b 8c 8d 9 10a 10b).
+command, run `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py step <ID>` (IDs: 1a 1b 1c 2 3b 4 5 6a 6b 6c 7 8a 8b 8c 8d 9 10a 10b).
 Just before any question to David, run `loop_status.py wait <ID> "<the ask in a few plain
 words>"`, then ask it with `AskUserQuestion`; the next `step` clears it. The project's
 `AskUserQuestion` hook (`loop_status.py ask-hook`) also records a wait on the current step with the
@@ -107,12 +107,14 @@ F238's, which sends step 2's close to `--no-close`) applies at that step.
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py --no-close
 ```
 
-Say the three lines. The SUM line and the superseded closes are on the page's Changesets tab. `--no-close` previews; step 2 closes.
+Say the three lines; the first says the standing line (the previous run's week) and how many reads
+are due. The superseded closes are on the page's Changesets tab. `--no-close` previews; step 2 reads and
+closes.
 
 ## Step 1c: This week's conversations
 
 Targeted mode (`--cluster`, `--playbook`, `--topic`): skip the pull if an artifact covers the
-window, run `run_tests.py --playbook/--topic`, and go to step 3a for that one target.
+window, run `run_tests.py --playbook/--topic`, run step 2, and go to step 4 for that one target.
 
 Weekly mode: run the pull for the most recent complete Monday to Sunday week every time, before
 triage. When its artifact already exists under `~/.ada-evidence/tablo/`, the pull does not
@@ -124,27 +126,54 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py --instance 
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py --instance tablo
 ```
 
-Say the three lines. The channel bars are on This week. Keep the artifact path; step 6a needs it.
+Say this week's standing line, then the three triage lines. The stage bars are on This week. Keep
+the artifact path; step 6a needs it.
 
 ## Step 2: Check last week's changes
 
 Runs right after the pull, before anything this week is ranked or approved. Four parts, in order.
 
-**Close what is due.**
+**Read what is due.**
 
 ```bash
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py
 ```
 
 If a Loop run reads line says to preview only, run it with `--no-close` instead and say why in one
-line. A decision is looked at from its earliest look (the typed horizon, one week by default) and
-gets one of four answers: it worked, it did not move, it got worse, not enough evidence. Two
-readings are said in these words: "moved, short of target" (the number moved the predicted way by
-more than chance and stopped short of the target) and "reached, underpowered" (the number is at or
-past the target, but the data cannot yet tell it from chance). Each names the change it was testing
-or says plainly that none was attached. When other changes shipped in the same stretch, list them:
-an attached change is a candidate, never a cause. A decision that needs more weeks stays open and
-says how many; its verdict date is when the data should have enough conversations to see the change.
+line. It prints READS DUE: every open decision whose change has been live 7 days or more with no
+verdict read on file, then every live change that long that no decision names, one line per change
+and channel with the command to run. A decision with no change attached is listed first; link it
+with WHICH CHANGE below before its read. A line with no command says why it cannot be read (no
+channel on file, no live date, nothing a read can select, such as a custom instruction): ask David
+the close question below for it and close it by hand, the same command without `--read`.
+
+Run every line's command before anything new is approved, or say in one line why not. Each is one
+call; a voice read of up to 200 calls takes a while, so run it in the background:
+
+```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_read.py verdict --changeset <CHANGESET-ID> --channel <CHANNEL> [--decision <DECISION-ID>]
+```
+
+Say its three lines. Then read in full every conversation it lists
+(`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_read.py show <CONVERSATION-ID>`) and
+decide each flagged answer yourself before the recommendation is repeated.
+Ada's grade is shown beside the read and never decides.
+
+Then one `AskUserQuestion` per read (before the first: `loop_status.py wait 2 "Close the reads
+due"`): the headline as printed, what the full reads showed in one sentence, and four options, the
+one the script recommends first and marked (Recommended), the rest in this order: worked, did not
+work, made it worse, cannot tell, each with the script's why. His free-text answer through "Other"
+is recorded verbatim. On his answer:
+
+```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py close <decision> --verdict <word> --read <read id> --by david --note "<his words>"
+```
+
+`<word>` is worked, did-not-work, made-it-worse or cannot-tell. The read id is the `id` of the row
+the third line names, in `reference/history/verdict-reads/<date>.jsonl`; paste it, never say it. A
+read with no decision (a live change nobody predicted) closes nothing: say its headline and ask
+nothing, unless it is a rollout. A rollout's keep, stop or widen question is asked on its read
+(below).
 
 The same run prints SUPERSEDED: an open decision whose attached change was replaced on the
 decision's playbook by a later edit is closed inconclusive with the replacing change named, the days
@@ -190,7 +219,7 @@ whose edit is still live: a replaced edit's cell is shown and not summed. The re
 their reason. Nothing created in the last 72 hours is read, on any channel; the header says the
 last graded day. A cell with under 3 graded days after the change, or under 15 conversations on
 either side, is shown with its numbers and labelled too early. A cell with "the after window also holds" names the other
-changes on the same entity: say them. "early read, not a verdict".
+changes on the same entity: say them. The cells are a chart beside the reads above and close nothing.
 
 **Loop run reads.** Every line under `## Loop run reads` in TODO is due on every run, whatever the
 day. A line whose date has passed or whose item is closed: say so in one line and skip it. Every
@@ -199,34 +228,19 @@ read-only from Ada, and report it in one or two sentences per item read, with nu
 denominators against the baseline the line gives. Say "not measurable this run" and why when a read
 cannot be done; never skip one silently. A read is a report. It is filed as a finding at step 10b only
 when it shows new measured harm or a new broken check. Never edit TODO; a line that needs changing
-is asked of David with `AskUserQuestion` at step 10b. Report the CHANGESET SCOREBOARD this step's `brief_state.py`
-run printed (step 1b says only its SUM line), as printed, without recomputing it, and say "early
-read, not a verdict".
+is asked of David with `AskUserQuestion` at step 10b. Say the standing line step 1b printed.
 
-**Ask the open rollout decisions, before any new approval.** For every active rollout with an open
-decision, and for every `regressing` line, ask David now with one `AskUserQuestion` call (before it:
-`loop_status.py wait 2 "Decide the rollouts"`): the change in one line, the cell's numbers and
-label, and the options (keep the rollout running, stop it, or widen it), your recommendation first.
-His answer is a decision he makes outside this loop (`weekly-playbook-analysis` Step 9 for a rollout
-change); record his words. Once a rollout has ended (promoted or stopped), end its registry row, so
-`registry.py ready` stops holding that channel, one call per entity it names:
+**Rollouts, before any new approval.** A rollout's keep, stop or widen question is asked on its
+read, never on the cells' labels: the same `AskUserQuestion` as its read when READS DUE lists it,
+with the headline and the options keep the rollout running, stop it, or widen it, your
+recommendation first. A rollout the cells above label `regressing` before its seventh day is read
+now with the same `early_read.py verdict` command (its headline says partial week) and asked on that
+read. His answer is a decision he makes outside this loop (`weekly-playbook-analysis` Step 9 for a
+rollout change); record his words. Once a rollout has ended (promoted or stopped), end its registry
+row, so `registry.py ready` stops holding that channel, one call per entity it names:
 `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <CHANGESET-ID> <ENTITY-ID> --relation rollout_on --channel <CHANNEL> --remove --by david`. While a rollout on a channel is `regressing` and David has not decided it,
 no new prediction goes on that channel: `approval_gate.py decide` refuses one there and asks for
-`--rollout-decided "<David's words>"`. A `regressing` line also takes target slot 1 at step 4 with
-its drafted question.
-
-## Step 3a: Is this new
-
-```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py mix
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py series --kind <KIND> --platform <CHANNEL>
-```
-
-`series` has no single-cluster flag. `<KIND>` and `<CHANNEL>` are the first two parts of the
-cluster key (`kind|channel|...`); it prints the top 8 clusters of that kind on that channel, so
-raise `--top` if the chosen cluster is not among them.
-
-Say the three lines.
+`--rollout-decided "<David's words>"`.
 
 ## Step 3b: What is coaching doing
 
@@ -364,9 +378,8 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py show --judg
 `AskUserQuestion`, one question per finding from both tables, every target read at step 5
 among them, 4 findings a call and several calls when there are more. Each question leads with one
 goal block, from the page's `goal` for that finding: the goal in resolved conversations a week, the
-loss it recovers, the earliest look and the verdict date, and how many weeks the data needs to see
-a change that size. The options are the page's two goal options (`goal.options`: the whole loss back
-and half of it, or the smallest goals one week and four weeks of data can see), each an approve with
+loss it recovers, and that its verdict is read 7 days after the change goes live. The options are
+the page's two goal options (`goal.options`: the whole loss back and half of it, or the smallest goals one week and four weeks of data can see), each an approve with
 its goal, then reject and defer, the one you recommend first and why. No separate resolved-a-week
 question is asked. Each approve creates or extends a W item with that goal: the question names it,
 "extends W62 (Chat Connectivity Fix)" when an open W item already works that playbook, rule or topic
@@ -377,7 +390,8 @@ finding, with a goal for each approve"`. Then, per finding, with the chosen opti
 JSON passed as it stands:
 
 ```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py decide --judgment <JSON> --finding <ID> --decision approved|rejected|deferred --note "<David's words>" --prediction '{"cluster_key":"<KEY>","metric":"pct","direction":"down","threshold":3.5,"horizon_weeks":1}' --item <W#>
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py decide --judgment <JSON> --finding <ID> --decision approved|rejected|deferred --note "<David's words>" --prediction '{"cluster_key":"<KEY>","metric":"pct","direction":"down","threshold":3.5}' --item <W#>
+```
 
 That call writes nothing; it prints the `on yes` command with a token and its `question` carries
 the goal block for the prediction given. Run `on yes` verbatim. Approval is refused for a finding
@@ -395,10 +409,8 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py import-approvals ~
 ```
 
 Say what would be recorded and what skipped and why, then run it without `--dry-run`. Per
-decision say its goal in resolved conversations a week, its earliest look and its verdict date. The
-horizon typed (1 week by default, W85) is the earliest look; the verdict date is the weeks the data
-needs to see the predicted change (David, 2026-10-05). When the tool says no number of weeks can see
-it, say that in those words and leave it. A prediction in conversations rather than percent is
+decision say its goal in resolved conversations a week and that its verdict read is due 7 days
+after its change goes live (step 2 of a later run). A prediction in conversations rather than percent is
 refused; ask for a percent. Every imported decision carries its goal and a resolved-a-week row; an
 approval on a cluster that does not translate and carries no goal is skipped with that reason:
 decide it again at step 6b with a goal option.
@@ -411,11 +423,15 @@ decide it again at step 6b with a goal option.
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/fix_check.py
 ```
 
-It reads the last run's week plan (`reference/history/loop-runs.jsonl`) and, per item, whether
-the registry holds a `fixes` link from it to a changeset (staged, in rollout or promoted). No Ada
-call. Say its three lines; record the first with `loop_status.py note 7 "<the first line>"`.
-When the script says no week plan is on file, record that line the same way and go to step 8a.
-When every item has a fix, go to step 8a.
+It reads this run's approvals (the W items step 6b created or extended) and the open items with
+no fix on file (`registry.py ready`), and the last recorded week plan
+(`reference/history/loop-runs.jsonl`) only when both are empty; per item, whether the registry
+holds a `fixes` link from it to a changeset (staged, in rollout or promoted). No Ada call. Say its
+three lines; record the first with `loop_status.py note 7 "<the first line>"`. An item with more
+than one change on file is named with each of them and asked about: one `AskUserQuestion`, the
+changesets by title, which one is the fix; remove the others, one call each:
+`registry.py link <W#> <CHANGESET-ID> --relation fixes --remove --by david`. When the script says it has nothing to check, record that
+line the same way and go to step 8a. When every item has a fix, go to step 8a.
 
 Otherwise `loop_status.py wait 7 "Write a fix now, or go on?"` and one `AskUserQuestion`: at most
 the three items with the largest goals, plus "Go on to stage 8" (the tool allows 2 to 4 options).
@@ -442,7 +458,7 @@ When nothing is in testing, `loop_status.py skip 8a 8b 8c 8d 9 --reason "nothing
 ask David with `AskUserQuestion`, and on his yes run its `on_yes` and go to step 10a.
 
 A simulation here answers one question: does Ada reach the changed steps and say the new words.
-It never decides on a pass rate. Live Ada is measured in production, by the 72-hour read, so
+It never decides on a pass rate. Live Ada is measured in production, by the day-7 read at step 2, so
 there is no live arm, no 3-rep gate, no reasons file, no waiver, no top-up and no separate
 regression batch. The old gate (`sim_harness.py gate`) is kept for one exception: a change that
 removes a handoff or an exit, where David asks for it.
@@ -476,18 +492,19 @@ Record `loop_status.py note 8d "reach N of M, words held on N"`.
 
 ## Step 9: Ship it
 
-Draft the deploy note (changeset-inspect skill, Deploy notes) and a prediction
-(cluster, metric, direction, threshold, horizon 1 week). Read the slots from Ada itself:
+Draft the deploy note with its rubric (changeset-inspect skill, Deploy notes) and a prediction
+(cluster, metric, direction, threshold).
+A promote or rollout start without a rubric is refused: write it first. Read the slots from Ada itself:
 `list_agent_changesets(status="testing")`, and every changeset whose `rollout.status` is `active`
 holds a slot on its playbooks' channel; name each one by its work item (`registry.py show`). Ada
 allows 100% in total, so two 50% rollouts at once. Then `loop_status.py wait 9
 "Launch, and how"` and one `AskUserQuestion` with these options, recommended first:
 - **50% rollout, capped** when this channel's slot is free: names the cap (600 voice, 1,000
-  chat) and that the 72-hour read decides promote or stop.
+  chat) and that its day-7 read decides keep, stop or widen.
 - **Promote at 100%** when the slot is taken and the change is a small chat fix (one or two
-  steps, chat only): names that `revert` is the way back and the read is before against after.
+  steps, chat only): names that `revert` is the way back and its day-7 read decides it.
 - **Wait for a slot** when this channel's slot is taken and the change is voice or a rewrite:
-  names the changeset holding the slot, its work item, and when its 72-hour read is due.
+  names the changeset holding the slot, its work item, and when its day-7 read is due.
 - **Hold.**
 The note is written on his yes, then the hand-off to `weekly-playbook-analysis` Step 9 items 7
 and 8 for the call itself. The ledger row is registered at the `work` close with the prediction
@@ -546,8 +563,9 @@ David with `AskUserQuestion`: `loop_status.py skip 10a --reason "<why>"`, its `a
 3. Record how the run ends, as its own calls. (A) Every change this run staged, gated GO or
    promoted, one call each:
    `loop_status.py shipped <CHANGESET-ID> --title "<2 to 3 words>" --staged --gated-go --promoted`
-   (the flags that hold). (B) When nothing was staged or gated: a week plan of at most 5 W items,
-   most resolved conversations a week first, one call each, the title read from the registry:
+   (the flags that hold). (B) Always record the week plan, shipped or not, of at most 5 W items,
+   most resolved conversations a week first, one call each, the title read from the registry (step
+   7 falls back to it when a run has no approvals and nothing ready):
    `loop_status.py plan <W#> --goal <resolved a week> --route "<stage script or skill>" --blocker
    "<what it waits on, or none>"`. Ask David with `AskUserQuestion` to approve the plan (the items
    with title and goal in the question). Its result prints `this_week`: put those lines in
@@ -569,5 +587,5 @@ David with `AskUserQuestion`: `loop_status.py skip 10a --reason "<why>"`, its `a
 
 - D3: promotion stays manual, through `weekly-playbook-analysis` Step 9; the live promote call is not enabled.
 - D4 (applies to the old gate only, run on David's request): a failing test case is waived only by a reason with `"waive": true`; a reason alone records the failure. The bar is per case by role (step 8d), with no hard 100%.
-- D5: a decision whose evidence is not decisive at its horizon closes itself as "not enough evidence".
+- D5 (changed 2026-10-23): a decision closes from its day-7 read on David's answer; "cannot tell" is one of his four answers. The superseded close is the one automatic close.
 - D7: voice test runs simulate the conversation (F48); there is no audio, so speech recognition, barge-in and keypad input are not tested.
