@@ -107,8 +107,9 @@ F238's, which sends step 2's close to `--no-close`) applies at that step.
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py --no-close
 ```
 
-Say the three lines; the first says the standing line (the previous run's week) and how many reads
-are due. The superseded closes are on the page's Changesets tab. `--no-close` previews; step 2 reads and
+Say the three lines: the first is the standing line (the previous run's week), the second how many
+reads are due. That count leaves out the decisions that need their change linked first; the line
+names those apart. The superseded closes are on the page's Changesets tab. `--no-close` previews; step 2 reads and
 closes.
 
 ## Step 1c: This week's conversations
@@ -126,7 +127,8 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py --instance 
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py --instance tablo
 ```
 
-Say this week's standing line, then the three triage lines. The stage bars are on This week. Keep
+Say the three triage lines; the first is this week's standing line, said once. The stage bars are
+on This week. Keep
 the artifact path; step 6a needs it.
 
 ## Step 2: Check last week's changes
@@ -142,11 +144,23 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py
 If a Loop run reads line says to preview only, run it with `--no-close` instead and say why in one
 line. It prints READS DUE: every open decision whose change has been live 7 days or more with no
 verdict read on file, then every live change that long that no decision names, one line per change
-and channel with the command to run. A decision with no change attached is listed first; link it
-with WHICH CHANGE below before its read. A line with no command says why it cannot be read (no
-channel on file, no live date, nothing a read can select, such as a custom instruction). For a
-decision, ask David the close question below and close it by hand, the same command without
-`--read`. For a live change with no decision, say the line and close nothing.
+and channel with the command to run. What each line without a read command means:
+
+- "no change attached", "names N different changes" or "N changes are linked": the decision is
+  listed first. Link it with `ledger.py link` (WHICH CHANGE below) first; its read is listed on the
+  next brief.
+- "read on file, not closed": the read ran and the decision is still open. The line carries the
+  `ledger.py close` command with the read id; read that read's listed conversations and ask the
+  close question below.
+- "not readable: nothing the read can select" (coaching turned off only, a custom instruction):
+  the only line closed by hand. For a decision, ask David the close question below and close it
+  with the same close command without `--read`; for a live change with no decision, say the line
+  and close nothing.
+- "no channel on file": the change has no deploy note naming a channel; ask David which channel,
+  then run the read command below with it.
+
+A change whose read David waived (`registry.py link <CHANGESET-ID> pre-redesign --relation
+read_waived --by david`) is not listed.
 
 Before a line's read, check that its change's deploy note has a rubric (the newest `deploy_note`
 row for the changeset in `~/repos/ada-tablo-ops/reference/history/deployments.jsonl` carries
@@ -157,10 +171,12 @@ ended-well share (the W item's goal in resolved a week over the playbook's weekl
 its current share); and `before_pct`, the playbook's share in the week file of the run before launch
 (`~/.ada-evidence/tablo/stage-results/week_<run>.json`). Get David's yes in one `AskUserQuestion`
 (the rubric in plain words, your draft first and marked (Recommended)), record it with a second note
-on that changeset, then run the read:
+on that changeset, then run the read. The second note carries the first note's text, gate and
+decision forward, so it needs no `--note`. Give one `--expect` per entity and channel the first
+note expects, in the form `--expect "<containment|resolution> <up|down> on <entity_id>/<channel>"`:
 
 ```bash
-python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py note --changeset <CHANGESET-ID> --by david --source <the note's W#,F#> --expect "<the note's expect>" --rubric "<check>" [--rubric "<check>" ...] --wrong-entrant "<test>" --ended-well-pct <N> --before-pct <N> --note "rubric before the day-7 read"
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py note --changeset <CHANGESET-ID> --by david --source <the note's W#,F#> --expect "<containment|resolution> <up|down> on <entity_id>/<channel>" [--expect ... per entity] --rubric "<check>" [--rubric "<check>" ...] --wrong-entrant "<test>" --ended-well-pct <N> --before-pct <N>
 ```
 
 Never offer "cannot tell, no bars on file" as a verdict: a read that says so had no rubric; record

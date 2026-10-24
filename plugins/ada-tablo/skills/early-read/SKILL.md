@@ -28,15 +28,20 @@ is sampled to `--voice-cap` (200) calls. Each conversation is read twice against
 questions (did it reach the changed step or rule; did Ada do or say the new thing; did the
 customer's problem end, by their own words or a tool's result; if it stopped without a goodbye, was
 the stop benign or a loss), then the deploy note's rubric checks (the `--check` lines when the note
-has none), with its wrong-entrant test first; wrong entrants are counted on their own line and are
-never part of the verdict. Code recommends worked when new behaviour is in at least 80% of those
+has none), with its wrong-entrant test first; wrong entrants are counted, set aside on the
+headline ("N wrong entrants set aside") and are never part of the verdict. Code recommends worked when new behaviour is in at least 80% of those
 that reached the change and ended well meets the note's share (`--ended-well-pct`); did not work
 when new behaviour is under 50% of reached or ended well is under the week before launch
 (`--before-pct`); cannot tell otherwise, when fewer than 15 reached it, when no bars are on file, or
 when more than 20% of the conversations picked were not read.
 Ada's grade is shown beside the read and never decides. It prints three lines (the headline "New behaviour in N of M that reached it; the
-problem ended in K; Ada graded R resolved" with the recommendation, the full reads to do, where the
-row is), appends one row of counts and ids to `reference/history/verdict-reads/<date>.jsonl`, and
+problem ended in K; Ada graded R of M resolved", Ada's grade over the same M that reached it, with
+"sampled S of E" when the voice cap applied and the recommendation; the full reads to do, or
+"Nothing to close; the read is on file." for a read with no decision; where the row is). The full
+reads are the conversations the readers did not settle: a disagreement, a check one reading or no
+reading answered, a quote not found, a conversation not read or not fetched (Ada's rate limit or an
+Ada error on that one conversation; the rest are still read), plus two that reached it at random.
+An agreed loss is counted, not listed. It appends one row of counts and ids to `reference/history/verdict-reads/<date>.jsonl`, and
 keeps the transcripts under `~/.ada-evidence/tablo/verdict-reads/`. Read every listed conversation
 with `show` (Step 3) before the recommendation is repeated; the decision is closed by a person at
 evidence-loop step 2 (`ledger.py close <decision> --verdict <word> --read <read id> --by david --note "<his words>"`).
