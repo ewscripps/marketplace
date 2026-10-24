@@ -247,8 +247,8 @@ prediction sits on a cluster, never pick one yourself.
 Step 7 checks what this run decided and what is ready to write: the W items step 6b approved
 (from `approvals_<date>.jsonl` or the registry rows written since the run started) and the open
 items `registry.py ready` lists with no `fixes` link (loop verdict redesign, 2026-10-23). Until then
-it read the last non-empty week plan, so a run that shipped was checked against an older plan. The week plan is the fallback when both are empty, which is why step
-10b records one every run. A `fixes` link to any changeset counts as written: staged, in rollout
+it read the last non-empty week plan, so a run that shipped was checked against an older plan.
+The week plan is the fallback when both are empty, which is why step 10b records one every run. A `fixes` link to any changeset counts as written: staged, in rollout
 and promoted all mean someone wrote the fix, and the kind word in the line says which. An item has
 one active `fixes` link: the work skill removes the earlier one when it stages a replacement, and
 when more than one remains (W116 had five on 2026-10-23) the script names all of them and step 7

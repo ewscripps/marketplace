@@ -144,8 +144,27 @@ line. It prints READS DUE: every open decision whose change has been live 7 days
 verdict read on file, then every live change that long that no decision names, one line per change
 and channel with the command to run. A decision with no change attached is listed first; link it
 with WHICH CHANGE below before its read. A line with no command says why it cannot be read (no
-channel on file, no live date, nothing a read can select, such as a custom instruction): ask David
-the close question below for it and close it by hand, the same command without `--read`.
+channel on file, no live date, nothing a read can select, such as a custom instruction). For a
+decision, ask David the close question below and close it by hand, the same command without
+`--read`. For a live change with no decision, say the line and close nothing.
+
+Before a line's read, check that its change's deploy note has a rubric (the newest `deploy_note`
+row for the changeset in `~/repos/ada-tablo-ops/reference/history/deployments.jsonl` carries
+`rubric`); every note written before 2026-10-23 has none. When it has none, draft one: the change's checks from
+the note's `expect`, the W item's done-when and any earlier `--check` lines under
+`~/.ada-evidence/tablo/early-reads/`; a wrong-entrant test (who the change is not meant for); the
+ended-well share (the W item's goal in resolved a week over the playbook's weekly volume, added to
+its current share); and `before_pct`, the playbook's share in the week file of the run before launch
+(`~/.ada-evidence/tablo/stage-results/week_<run>.json`). Get David's yes in one `AskUserQuestion`
+(the rubric in plain words, your draft first and marked (Recommended)), record it with a second note
+on that changeset, then run the read:
+
+```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py note --changeset <CHANGESET-ID> --by david --source <the note's W#,F#> --expect "<the note's expect>" --rubric "<check>" [--rubric "<check>" ...] --wrong-entrant "<test>" --ended-well-pct <N> --before-pct <N> --note "rubric before the day-7 read"
+```
+
+Never offer "cannot tell, no bars on file" as a verdict: a read that says so had no rubric; record
+one and run it again.
 
 Run every line's command before anything new is approved, or say in one line why not. Each is one
 call; a voice read of up to 200 calls takes a while, so run it in the background:
@@ -172,8 +191,8 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py close <decision> -
 `<word>` is worked, did-not-work, made-it-worse or cannot-tell. The read id is the `id` of the row
 the third line names, in `reference/history/verdict-reads/<date>.jsonl`; paste it, never say it. A
 read with no decision (a live change nobody predicted) closes nothing: say its headline and ask
-nothing, unless it is a rollout. A rollout's keep, stop or widen question is asked on its read
-(below).
+nothing, unless it is a rollout. A rollout at day 7 or later has its keep, stop or widen question
+asked on its read (below).
 
 The same run prints SUPERSEDED: an open decision whose attached change was replaced on the
 decision's playbook by a later edit is closed inconclusive with the replacing change named, the days
@@ -230,12 +249,13 @@ cannot be done; never skip one silently. A read is a report. It is filed as a fi
 when it shows new measured harm or a new broken check. Never edit TODO; a line that needs changing
 is asked of David with `AskUserQuestion` at step 10b. Say the standing line step 1b printed.
 
-**Rollouts, before any new approval.** A rollout's keep, stop or widen question is asked on its
-read, never on the cells' labels: the same `AskUserQuestion` as its read when READS DUE lists it,
-with the headline and the options keep the rollout running, stop it, or widen it, your
-recommendation first. A rollout the cells above label `regressing` before its seventh day is read
-now with the same `early_read.py verdict` command (its headline says partial week) and asked on that
-read. His answer is a decision he makes outside this loop (`weekly-playbook-analysis` Step 9 for a
+**Ask the open rollout decisions, before any new approval.** For every active rollout with an
+open decision, and for every `regressing` line, ask David now with one `AskUserQuestion` call
+(before it: `loop_status.py wait 2 "Decide the rollouts"`): the options keep the rollout running,
+stop it, or widen it, your recommendation first. Before its seventh day the question carries the
+change in one line and the cell's numbers and label; at day 7 or later it is asked on its verdict
+read, in the same question as the read. A rollout read carries `--decision` only when a decision
+exists, and closes nothing when none does. His answer is a decision he makes outside this loop (`weekly-playbook-analysis` Step 9 for a
 rollout change); record his words. Once a rollout has ended (promoted or stopped), end its registry
 row, so `registry.py ready` stops holding that channel, one call per entity it names:
 `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <CHANGESET-ID> <ENTITY-ID> --relation rollout_on --channel <CHANNEL> --remove --by david`. While a rollout on a channel is `regressing` and David has not decided it,
@@ -271,7 +291,8 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py --artifa
 No Ada call and no model call; nothing is spent here. It reads step 2's
 `changes_<MON>_<SUN>.json` from stage-results: a `regressing` line takes the first slot (rollouts
 first, then the largest loss) and is read like any target; it is decided as its change at step
-2, never at step 6b. The first 3 on the shortlist (`read_at_4c: true`) are this week's reads;
+2 when it is a rollout or live 7 days or more (a younger promoted change waits for its day-7 read),
+never at step 6b. The first 3 on the shortlist (`read_at_4c: true`) are this week's reads;
 the rest are there to swap in. Say the three lines. The shortlist, the held items and every playbook and topic over the floor are on This week, sorted by lost a week. The question names each target in one line: name, conversations, resolved now against resolved before, and for voice the transcription minutes; the two options are read it (Recommended) and skip it. A coaching or failure-reason target cannot be approved at step 6b; say so in its line.
 
 One `AskUserQuestion` call holds all of them, one question per target: the target in a line, and
@@ -428,9 +449,11 @@ no fix on file (`registry.py ready`), and the last recorded week plan
 (`reference/history/loop-runs.jsonl`) only when both are empty; per item, whether the registry
 holds a `fixes` link from it to a changeset (staged, in rollout or promoted). No Ada call. Say its
 three lines; record the first with `loop_status.py note 7 "<the first line>"`. An item with more
-than one change on file is named with each of them and asked about: one `AskUserQuestion`, the
-changesets by title, which one is the fix; remove the others, one call each:
-`registry.py link <W#> <CHANGESET-ID> --relation fixes --remove --by david`. When the script says it has nothing to check, record that
+than one change on file is named and asked about (the script prints "<item> has N changes on
+file; the step 7 question asks which", without titles): one `AskUserQuestion`, the changesets by
+title from `registry.py show <W#>`, which one is the fix; remove the others, one call each:
+`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <CHANGESET-ID> --relation fixes --remove --by david`.
+When the script prints "No approvals this run, nothing ready and no week plan on file.", record that
 line the same way and go to step 8a. When every item has a fix, go to step 8a.
 
 Otherwise `loop_status.py wait 7 "Write a fix now, or go on?"` and one `AskUserQuestion`: at most

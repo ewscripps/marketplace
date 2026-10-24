@@ -163,12 +163,12 @@ When the done-when holds and you have read the verification output:
      (`ledger.py open` shows "no change attached yet"): link it, with David's yes on which one.
      `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py link <decision-id> --changeset <CHANGESET-ID> --by david --note "<W#>"`
    - **Otherwise, register one.** Take the prediction David gave at the launch question
-     (evidence-loop step 9: `cluster_key`, `metric`, `direction`, `threshold`, `horizon_weeks`),
+     (evidence-loop step 9: `cluster_key`, `metric`, `direction`, `threshold`),
      or, for a change that went through the old gate, from its gate file
      `~/.ada-evidence/tablo/stage-results/gate_<date>_<runs-batch>.json`, key `prediction`. With
      neither, ask David for one; never write one yourself. Take the baseline from the latest
      measured window with `--baseline-window` so `register` checks it against the measured row.
-     `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py register <promoted-date>-<slug> --changeset <CHANGESET-ID> --cluster-key <key> --metric <pct|count> --baseline-count <n> --baseline-denominator <d> --baseline-window <window-end> --target <threshold> --direction <down|up> --horizon-weeks <n> --promoted-at <ISO time> --by david --note "<what changed> (<W#>, gate <file>)"`
+     `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py register <promoted-date>-<slug> --changeset <CHANGESET-ID> --cluster-key <key> --metric <pct|count> --baseline-count <n> --baseline-denominator <d> --baseline-window <window-end> --target <threshold> --direction <down|up> --promoted-at <ISO time> --by david --note "<what changed> (<W#>, gate <file>)"`
 
    Re-run `ledger.py open --format json`: every promoted changeset's ID must now appear. If `register` or
    `link` refuses, or David has no prediction to give, do not close. Write

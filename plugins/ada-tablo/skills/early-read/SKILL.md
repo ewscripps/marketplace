@@ -39,7 +39,7 @@ problem ended in K; Ada graded R resolved" with the recommendation, the full rea
 row is), appends one row of counts and ids to `reference/history/verdict-reads/<date>.jsonl`, and
 keeps the transcripts under `~/.ada-evidence/tablo/verdict-reads/`. Read every listed conversation
 with `show` (Step 3) before the recommendation is repeated; the decision is closed by a person at
-evidence-loop step 2 (`ledger.py close <decision> --verdict <word> --read <read id> --by david`).
+evidence-loop step 2 (`ledger.py close <decision> --verdict <word> --read <read id> --by david --note "<his words>"`).
 
 `forensics_evidence.py --cluster-review` reads by cluster key from last Friday's triage, so it
 cannot read a change that went live mid-week. This reads by playbook since the go-live time.
