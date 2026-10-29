@@ -3,15 +3,15 @@ name: evidence-loop
 description: Weekly evidence loop for the Tablo Ada instance. Shows where Ada got worse this week from the whole conversation population, turns real failed conversations into Ada test cases, and checks a staged change against them before a person promotes it. Read-heavy; every write to Ada sits behind an explicit approval. Use for the Friday review, or mid-week with a cluster, playbook or topic to chase one thing.
 user-invocable: true
 argument-hint: '[--window START END | --cluster KEY | --playbook ID | --topic ID] [--no-pull]'
-allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_read.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/fix_check.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(ls *), Bash(mkdir -p *), Read, Grep, Glob, Edit(/Users/181085/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md), AskUserQuestion, Skill
+allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_read.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/fix_check.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/handoff_cards.py *), Bash(osascript -l JavaScript ~/.claude/skills/omnifocus/scripts/of_add.js *), Bash(python3 ~/.claude/skills/omnifocus/scripts/of_read.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(ls *), Bash(mkdir -p *), Read, Grep, Glob, Edit(/Users/181085/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md), AskUserQuestion, Skill
 ---
 
 # Ada Evidence Loop (Tablo)
 
 One weekly run in ten stages, numbered 1 to 10 in run order; a stage with more than one step
 letters them (1a, 1b, 1c). Stage 1 collects the week; stage 2 reads last week's changes before
-anything new is approved; stages 3 to 6 measure and decide; stage 7 checks that the approved and ready
-items have their fixes written; stage 8 verifies a change someone has staged; at stage 9 a person ships it;
+anything new is approved; stages 3 to 6 measure and decide; stage 7 hands the work to a person, one
+card per playbook; stage 8 verifies a change a person has staged since; at stage 9 a person ships it;
 stage 10 closes the run. Every stage is built.
 `sim_harness.py promote` stops at a stub by design.
 
@@ -21,12 +21,22 @@ stage 10 closes the run. Every stage is built.
 - **4 Choose targets**.
 - **5 Read and verify**.
 - **6 Rank and decide**: 6a What it ranks, 6b David decides, 6c Record the decisions.
-- **7 Write the fix**: the approved and ready items, each with a change staged or not.
+- **7 Hand off the work**: one card per playbook for the items with no change, one OmniFocus task each.
 - **8 Prove it before it ships**: 8a the change in testing, 8b cases, 8c reach run, 8d read.
 - **9 Ship it**.
 - **10 Close the run**: 10a Audit the bench, 10b Record and stop.
 
-The fix itself is written in a `work` session between runs, or at stage 7 in the run, which checks it was.
+The run stops at the decision and writes no fix (W158, David, 2026-10-27). A person writes it in a
+fresh `work` session between runs, from a stage 7 card; a later run's stage 8 checks it.
+
+**Readers** (W158): Haiku reads every conversation first (twice, in two groupings); Sonnet reads
+again the ones Haiku flagged; Opus, this session, reads in full the conversations a verdict turns
+on. Codex stays for bulk full reads, launched by David. In a `work` session, David can settle the
+Haiku and Sonnet disagreements on a deciding field himself, on a tiebreak page (work skill, Tiebreak page).
+
+**Rollouts:** one rollout per playbook and channel at a time (David, 2026-10-27; was one per
+channel, 2026-10-02), so each rollout has a clean control. Changes on different playbooks may run
+together; overlap and exposure are judged at the launch question.
 
 **How to talk during the run.** Every script prints three lines in text mode: what happened with its counts, what the run does next, and a `ref:` line with the page and the file. Repeat them; add nothing. `--format json` is for tests and the page, never for the run. What David reads in detail is on the page's This week tab; the terminal is where he answers. No entity IDs unless David must paste one; no statistics words.
 Every W, D or F ID you say or put in a question carries its title from the registry, "W47
@@ -46,8 +56,9 @@ one-line meaning. A question's text follows the same order and fits in four sent
 **Why each rule exists** is in `REFERENCE.md` beside this file, by step. Read a section only
 when a step's output surprises you. Do not narrate it.
 
-**Writes.** Never `edit_agent_behavior` or `edit_agent_config`, except the stage made by step 7's work session, which is that skill's own write under its own question. The only other Ada writes are test-case
-and test-run creation through `sim_harness.py`. When a person must decide it returns
+**Writes.** Never `edit_agent_behavior` or `edit_agent_config`. The only Ada writes are test-case
+and test-run creation through `sim_harness.py`; the one other write is step 7's OmniFocus tasks, on
+David's yes. When a person must decide it returns
 `approval_required` with a token and an `on_yes` command: run `on_yes` verbatim, never build a
 token. Batches of 100 runs or fewer (30 for a voice batch) start without asking (David,
 2026-09-15); larger batches and any test-case creation ask first. `sim_admin.py` deletes and this skill never calls it. Staging,
@@ -189,16 +200,37 @@ call; a voice read of up to 200 calls takes a while, so run it in the background
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_read.py verdict --changeset <CHANGESET-ID> --channel <CHANNEL> [--decision <DECISION-ID>]
 ```
 
+The read is tiered: Haiku reads every conversation twice, then Sonnet reads once more every
+conversation the Haiku readings left unsettled on a deciding check (reached, new behaviour, ended
+well) and settles that check when its quote is in the conversation (`--second-model`, default
+Sonnet; `none` skips it). What it lists after that are the conversations the verdict turns on.
 Say its three lines. Then read in full every conversation it lists
 (`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_read.py show <CONVERSATION-ID>`) and
-decide each flagged answer yourself before the recommendation is repeated.
-Ada's grade is shown beside the read and never decides.
+decide each flagged answer yourself before the recommendation is repeated: this session is the
+Opus tier. Ada's grade is shown beside the read and never decides.
 
 Then one `AskUserQuestion` per read (before the first: `loop_status.py wait 2 "Close the reads
 due"`): the headline as printed, what the full reads showed in one sentence, and four options, the
 one the script recommends first and marked (Recommended), the rest in this order: worked, did not
 work, made it worse, cannot tell, each with the script's why. His free-text answer through "Other"
-is recorded verbatim. On his answer:
+is recorded verbatim.
+
+**The human gate, when a read is cannot tell.** When the read, after your full reads, still says
+cannot tell, the decision goes to David with what he needs to look himself. Print it:
+
+```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/handoff_cards.py link --read <read id>
+```
+
+It prints the read in one line, then the Ada conversations list pre-filtered to the change's
+playbooks (its coaching rules, tools or articles when it touched no playbook), the channel and the
+read's days, plus a rollout's own change set, and every conversation the readers flagged, one link
+each. Give David the list link and the flagged links as printed, then one `AskUserQuestion`: the
+headline and what your full reads showed, and three options, worked, did not work, wait a week,
+your recommendation first. Worked and did not work close the decision with the command below
+(`--verdict worked` or `did-not-work`) and his words. Wait a week closes nothing: the decision stays
+open, READS DUE lists it next run as read on file, not closed, and its read runs again then with
+`--until` that day. On his answer:
 
 ```bash
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py close <decision> --verdict <word> --read <read id> --by david --note "<his words>"
@@ -452,9 +484,10 @@ refused; ask for a percent. Every imported decision carries its goal and a resol
 approval on a cluster that does not translate and carries no goal is skipped with that reason:
 decide it again at step 6b with a goal option.
 
-## Step 7: Write the fix
+## Step 7: Hand off the work
 
-`loop_status.py step 7`, then:
+The run writes no fix (W158, David, 2026-10-27). It files one card per playbook for the work a
+person does next, in a fresh session. `loop_status.py step 7`, then:
 
 ```bash
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/fix_check.py
@@ -470,26 +503,43 @@ file; the step 7 question asks which", without titles): one `AskUserQuestion`, t
 title from `registry.py show <W#>`, which one is the fix; remove the others, one call each:
 `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <CHANGESET-ID> --relation fixes --remove --by david`.
 When the script prints "No approvals this run, nothing ready and no week plan on file.", record that
-line the same way and go to step 8a. When every item has a fix, go to step 8a.
+line the same way and go to step 8a.
 
-Otherwise `loop_status.py wait 7 "Write a fix now, or go on?"` and one `AskUserQuestion`: at most
-the three items with the largest goals, plus "Go on to stage 8" (the tool allows 2 to 4 options).
-Offer only items that are open in the registry (`registry.py show <W#>`); an item routed to code
-is offered last. When no offered item is open in the registry, ask nothing: `loop_status.py note 7 "<first line>"` and go to step 8a. Each item option names the item, its title and its goal from the script's first line ("Write W84
-(App Viewing Chat) now, goal 7 resolved a week"), the first marked (Recommended). On an item:
-invoke `Skill: work` with that W#, inside the Friday run: it stops after the stage lands and its
-`fixes` link is written; the cases and the reach run are this run's steps 8b to 8d; it never
-invokes `evidence-loop` and never runs `loop_status.py start`. When it ends blocked,
-`loop_status.py note 7 "<W# (title)> blocked: <what>"` and go to step 8a. When it says
-"Deliverable complete", record `loop_status.py note 7 "<W# (title)> written and staged"` and go to
-step 8a with that changeset. When the work session ends with no changeset (a code-routed item, or
-an item that is no longer open), `loop_status.py note 7 "<W# (title)>: nothing to test"` and go to
-step 8a. On "Go on": step 8a with whatever is in testing. `--run <date>`
-replays an earlier run's plan and records nothing.
+**One card per playbook.** Every item it lists with no change gets a card; an item already worked by
+an open card (an OmniFocus task "Ada <W#> ..." not done, `of_read.py --all`) gets a new one only when
+this run changed what it rests on, and the old task is named for David to delete. A card is one
+playbook, or one coaching route or tool when there is no playbook; two items on one playbook share a
+card. Its name is the customer situation and the channel in a support manager's words ("First-Time
+Setup calls", "Reception calls (coaching rule)"). Draft per card:
+
+- the reads it rests on: the verdict read ids from step 2 and earlier runs for the changes on that
+  playbook (`reference/history/verdict-reads/`), newest per change and channel;
+- the prompt: what the person does in the fresh session, in two to four sentences in the W item's
+  terms (what customers hit, what the reads showed, what to change and what not to), written as a
+  prompt they run, never as work an agent is already doing. The session itself opens with
+  `/ada-tablo:work <W#>`, which the card's first line already says.
+
+Then, per card:
+
+```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/handoff_cards.py card --item <W#> --name "<situation and channel>" --run <TODAY> --read <read id> [--read ...] --prompt "<the prompt>"
+```
+
+It writes the card to `~/.ada-evidence/tablo/cards/<filed>_<W#>.md` (every flagged conversation
+link) and prints its OmniFocus task: the title "Ada <W#> (<P#>): <name> (filed <date>)", the note
+(the prompt, the run, each read with its pre-filtered Ada list and the first 10 flagged
+conversation links), due the Friday of that week, and the `of_add.js` command. Say one line per
+card. Then `loop_status.py wait 7 "Add N cards to OmniFocus?"` and one `AskUserQuestion`: the card
+titles, one line each, and "Add them (Recommended)" or "Not now". On his yes run each command with
+`--dry-run`, then without, then `of_read.py --inbox --days 7` and confirm each title came back.
+OmniFocus here cannot edit or delete a task from a script, so a task a card replaces is named to
+David by its exact title to delete himself. Record `loop_status.py note 7 "<N> cards filed"` and go
+to step 8a. The run never invokes `work` and never stages anything at this step.
 
 ## Step 8: Prove it before it ships
 
-**8a. The change in testing.** Needs a changeset in `testing` status. Its staged body has a `config-health` pass with no P0
+**8a. The change in testing.** Needs a changeset in `testing` status, staged by a person in a
+`work` session since the last run. Its staged body has a `config-health` pass with no P0
 (`Skill: config-health --changeset <ID>`); a P0 stops step 8 here. Asking for the changeset:
 `loop_status.py wait 8a "Name the changeset in testing"`, then `AskUserQuestion` with the testing
 changesets as options, each named by its work item and title (`registry.py show`).
@@ -535,15 +585,19 @@ Draft the deploy note with its rubric (changeset-inspect skill, Deploy notes) an
 (cluster, metric, direction, threshold).
 A promote or rollout start without a rubric is refused: write it first. Read the slots from Ada itself:
 `list_agent_changesets(status="testing")`, and every changeset whose `rollout.status` is `active`
-holds a slot on its playbooks' channel; name each one by its work item (`registry.py show`). Ada
-allows 100% in total, so two 50% rollouts at once. Then `loop_status.py wait 9
-"Launch, and how"` and one `AskUserQuestion` with these options, recommended first:
-- **50% rollout, capped** when this channel's slot is free: names the cap (600 voice, 1,000
-  chat) and that its day-7 read decides keep, stop or widen.
+holds a slot on each of its playbooks on its channel: one rollout per playbook and channel (David,
+2026-10-27). Name each one by its work item (`registry.py show`). Ada allows 100% in total, so two
+50% rollouts at once. A change on another playbook of the same channel may launch beside a running
+rollout; say in the question which playbooks both touch and that the two overlap in exposure. Then
+`loop_status.py wait 9 "Launch, and how"` and one `AskUserQuestion` with these options, recommended
+first. When the work item has a decision page (`registry.py show <W#>` lists a `page` link), the
+`work` session updates it first and the question names the link on its first line.
+- **50% rollout, capped** when this playbook and channel's slot is free: names the cap (600 voice,
+  1,000 chat) and that its day-7 read decides keep, stop or widen.
 - **Promote at 100%** when the slot is taken and the change is a small chat fix (one or two
   steps, chat only): names that `revert` is the way back and its day-7 read decides it.
-- **Wait for a slot** when this channel's slot is taken and the change is voice or a rewrite:
-  names the changeset holding the slot, its work item, and when its day-7 read is due.
+- **Wait for a slot** when this playbook and channel's slot is taken and the change is voice or a
+  rewrite: names the changeset holding the slot, its work item, and when its day-7 read is due.
 - **Hold.**
 The note is written on his yes, then the hand-off to `weekly-playbook-analysis` Step 9 items 7
 and 8 for the call itself. The ledger row is registered at the `work` close with the prediction

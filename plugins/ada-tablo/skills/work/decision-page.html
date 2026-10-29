@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Decision page skeleton for the work skill (section 2, Decision page). Copy it, fill every
+     {{...}}, delete the comments and any block a stage leaves empty. Keep the CSS as is.
+     Words: plain, no IDs (changeset, playbook, step, run), no build terms, counts in a sentence.
+     Customer quotes: verbatim, short, with no name, email, phone, serial or order number. -->
+<title>{{Title, 2 to 4 words}}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;700;800&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#ffffff; --ink:#18202b; --muted:#5b6676; --line:#dde2ea;
+  --led:#1f6feb; --led-soft:#e3ecfd; --ok:#1a7f4b; --ok-soft:#e2f4ea; --bad:#b42318; --bad-soft:#fbe7e5; --warn:#9a6700; --warn-soft:#fbf0d4;
+  --display:"Schibsted Grotesk",system-ui,sans-serif; --body:"Source Sans 3",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f141b; --panel:#161d27; --ink:#e6ebf2; --muted:#9aa6b6; --line:#2a3443;
+  --led:#5b9dff; --led-soft:#1a2b47; --ok:#4cc38a; --ok-soft:#163327; --bad:#ff7b6e; --bad-soft:#3a1d1b; --warn:#e2b340; --warn-soft:#3a2f14; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f141b; --panel:#161d27; --ink:#e6ebf2; --muted:#9aa6b6; --line:#2a3443;
+  --led:#5b9dff; --led-soft:#1a2b47; --ok:#4cc38a; --ok-soft:#163327; --bad:#ff7b6e; --bad-soft:#3a1d1b; --warn:#e2b340; --warn-soft:#3a2f14; color-scheme:dark}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.55}
+.wrap{max-width:880px;margin:0 auto;padding:40px 16px 64px;display:grid;gap:40px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0}
+h1{font-size:2.1rem;font-weight:800;letter-spacing:-.01em} h2{font-size:1.3rem;font-weight:700} h3{font-size:1rem;font-weight:700}
+p{margin:0;max-width:65ch}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+section{display:grid;gap:14px}
+.lede{font-size:1.1rem;color:var(--muted)} .lede b{color:var(--ink)}
+.muted{color:var(--muted)} .small{font-size:.95rem}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+/* Strip: one square per conversation (one square per 2 or more past 60; say so in the legend) */
+.strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(14px,1fr));gap:4px}
+.call{aspect-ratio:1/1.5;border-radius:4px}
+.k1{background:var(--led)} .k2{background:var(--warn)} .k3{background:var(--bad)} .k4{background:var(--muted)} .kok{background:var(--ok)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 20px;font-size:.95rem}
+.legend span{display:inline-flex;align-items:center;gap:8px}
+.sw{width:12px;height:12px;border-radius:3px;display:inline-block}
+.quote{font-family:var(--mono);font-size:.85rem;color:var(--muted);border-left:3px solid var(--line);padding:4px 0 4px 12px}
+/* Options */
+.opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.opt{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;display:grid;gap:8px;align-content:start;min-width:0}
+.opt.pick{border:2px solid var(--ok)}
+.opt p{color:var(--muted);font-size:.95rem}
+.badge{justify-self:start;font-family:var(--mono);font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:var(--ok-soft);color:var(--ok)}
+.meter{height:8px;border-radius:4px;background:var(--line);overflow:hidden} .meter i{display:block;height:100%;background:var(--ok)}
+/* Before and after */
+.flows{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:640px){.flows{grid-template-columns:1fr}}
+.flow{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;display:grid;gap:10px;min-width:0;align-content:start}
+.step{display:grid;gap:4px;padding:10px 12px;border-radius:8px;background:var(--bg);font-size:.95rem}
+.step small{color:var(--muted);font-size:.85rem}
+.step.gone{background:var(--bad-soft);text-decoration:line-through;text-decoration-color:var(--bad)}
+.step.new{background:var(--ok-soft)} .step.exit{background:var(--led-soft)}
+.arrow{color:var(--muted);font-family:var(--mono);font-size:.8rem;padding-left:12px}
+.tag{font-family:var(--mono);font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;font-weight:500}
+.tag.ok{color:var(--ok)} .tag.led{color:var(--led)}
+/* Tests */
+.tablebox{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:.95rem}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500}
+tr:last-child td{border-bottom:0}
+.pill{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.pill.ok{background:var(--ok-soft);color:var(--ok)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)}
+/* Decision */
+.next{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;display:grid;gap:12px}
+ul{margin:0;padding-left:1.2em;display:grid;gap:6px}
+</style></head>
+<body><div class="wrap">
+
+<header style="display:grid;gap:10px">
+  <div class="eyebrow">Ada Evidence Loop · {{W#}} · {{channel}} · {{stage: "before staging" or "before launch"}}</div>
+  <h1>{{Title}}</h1>
+  <p class="lede">{{Who reaches this and why, one sentence.}} <b>{{The failure as one number: "0 of 17 calls ended well".}}</b> {{What this change does, one sentence.}}</p>
+</header>
+
+<section>
+  <div class="eyebrow">The problem</div>
+  <h2>{{Where the N conversations went, date to date}}</h2>
+  <!-- One div per conversation, grouped by kind; at most 4 kinds plus kok for the ones that ended well. -->
+  <div class="strip" role="img" aria-label="{{the legend in one sentence}}">
+    <div class="call k1"></div><!-- ... -->
+  </div>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--led)"></i><b class="num">{{n}}</b>&nbsp;{{what happened, plain words}}</span>
+    <!-- one span per kind used -->
+  </div>
+  <p class="quote">"{{a customer's words, verbatim}}"</p>
+  <!-- At most two quotes. One muted line of context if it is needed. -->
+</section>
+
+<section>
+  <div class="eyebrow">Ways to fix it</div>
+  <h2>{{2 or 3}} options</h2>
+  <div class="opts">
+    <div class="opt pick">
+      <span class="badge">Recommended</span>
+      <h3>{{Option name, 2 to 5 words}}</h3>
+      <p>{{What Ada does differently, one sentence.}}</p>
+      <div class="meter" role="img" aria-label="{{x}} of {{N}}"><i style="width:{{x/N as %}}"></i></div>
+      <p><b class="num">{{x}} of {{N}}</b> conversations it could have changed · {{size: "28 to 36 steps" or "one coaching rule"}}</p>
+    </div>
+    <!-- One .opt per other option, without .pick and the badge. -->
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">The {{call / chat}} path</div>
+  <h2>Before and after</h2>
+  <!-- For the recommended option. Mark removed turns .gone, new turns .new, new exits .exit. At most 10 steps a side. -->
+  <div class="flows">
+    <div class="flow">
+      <h3>Now</h3>
+      <div class="step">{{turn}}<small>{{where it breaks}}</small></div>
+      <div class="arrow">&darr; {{how it ends}}</div>
+    </div>
+    <div class="flow">
+      <h3>After</h3>
+      <div class="step new"><span class="tag ok">new</span>{{turn}}</div>
+      <div class="arrow">&darr; {{how it ends}}</div>
+    </div>
+  </div>
+</section>
+
+<!-- LAUNCH UPDATE ONLY: this section is added before the launch question. Leave it out before staging. -->
+<section>
+  <div class="eyebrow">Tests</div>
+  <h2>Simulated {{calls / chats}} on the new version</h2>
+  <div class="tablebox"><table>
+    <thead><tr><th>Simulated customer</th><th>What we checked</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>{{case, plain words}}</td><td>{{the expected behaviour}}</td><td><span class="pill ok">held</span> {{one phrase}}</td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted small">{{Any fix made after a run, in one or two sentences; any judge misread named.}}</p>
+</section>
+
+<section class="next">
+  <div class="eyebrow">Your decision</div>
+  <!-- Before staging: "Stage this fix?" and which option. Before launch: the rollout choice, prediction and what stays unfixed. -->
+  <h2>{{The question in the AskUserQuestion, as a heading}}</h2>
+  <p>{{Recommended answer and why, two sentences at most.}}</p>
+  <p><b>Prediction:</b> {{launch only: the threshold in a sentence}}</p>
+  <h3>Not fixed by this change</h3>
+  <ul><li>{{n of N: what still goes wrong}}</li></ul>
+</section>
+
+</div></body></html>

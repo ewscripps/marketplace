@@ -48,6 +48,13 @@ hours live inside the week, under 3 graded days after the change or 15 conversat
 (W126), a side with no conversations, no weekly pull on disk for the before window, or email on a
 partial Ada read.
 
+
+Tiered readers (W158, David, 2026-10-27): two Haiku readings disagreed on a deciding check often
+enough on the 2026-10-24 reads (W86 chat listed 72 of 112 for a full read) that the session's full
+reads were the slow step. Sonnet now reads the flagged ones once more and settles a check when its
+quote is in the conversation; Opus, the session, reads what is still open. A cannot-tell read goes
+to David with the pre-filtered Ada list and the flagged links (`handoff_cards.py link`), and his
+worked, did not work or wait a week closes it or leaves it for the next run.
 ## Step 3b: coaching
 
 The pull-based command `trend_evidence.py coaching` was retired from the weekly run on
@@ -244,17 +251,29 @@ prediction sits on a cluster, never pick one yourself.
 
 ## Step 7
 
-Step 7 checks what this run decided and what is ready to write: the W items step 6b approved
-(from `approvals_<date>.jsonl` or the registry rows written since the run started) and the open
-items `registry.py ready` lists with no `fixes` link (loop verdict redesign, 2026-10-23). Until then
-it read the last non-empty week plan, so a run that shipped was checked against an older plan.
-The week plan is the fallback when both are empty, which is why step 10b records one every run. A `fixes` link to any changeset counts as written: staged, in rollout
-and promoted all mean someone wrote the fix, and the kind word in the line says which. An item has
-one active `fixes` link: the work skill removes the earlier one when it stages a replacement, and
-when more than one remains (W116 had five on 2026-10-23) the script names all of them and step 7
-asks which. Nothing here calls Ada, because the approvals, the plan and the links are files, so the
-step is free to run and to replay. `fix_check.py --run <date>` replays an earlier run, prints the
-same three lines and writes no week file.
+Step 7 hands the work to a person (W158, David, 2026-10-27). Until then it offered to write one fix
+inside the run through the work skill; on the 2026-10-26 run the reads behind five playbooks' worth
+of changes needed a person to look at the conversations before any fix, and the in-run fix cut that
+short. The run now stops at the decision: one card per playbook, named by what the customer is
+doing and the channel, so a person can pick it up cold, with the reads and the flagged
+conversations in the note and the prompt for a fresh session first. OmniFocus here is the Standard
+edition, which blocks scripting, so a task is added through its `add` URL and an old task cannot be
+edited or removed from a script; the card names any task it replaces for David to delete.
+
+`fix_check.py` still decides which items need a card: the W items step 6b approved (from
+`approvals_<date>.jsonl` or the registry rows written since the run started) and the open items
+`registry.py ready` lists with no `fixes` link, with the week plan as the fallback when both are
+empty, which is why step 10b records one every run. A `fixes` link to any changeset counts as
+written: staged, in rollout and promoted all mean someone wrote the fix. An item has one active
+`fixes` link: the work skill removes the earlier one when it stages a replacement, and when more
+than one remains (W116 had five on 2026-10-23) the script names all of them and step 7 asks which.
+`fix_check.py --run <date>` replays an earlier run, prints the same three lines and writes no week
+file.
+
+The list link is the dashboard's own: its `f` parameter is "1:" plus LZ-string's URI encoding of
+the filter list, with the dashboard's filter keys (`playbookId`, `channel`, `changesetId`,
+`coachingApplied`, `actionId`, `articleId`, read from its script bundle 2026-10-27). The change set
+filter is added only for a rollout: after a promotion Ada attributes no conversation to it.
 
 ## Step 8
 

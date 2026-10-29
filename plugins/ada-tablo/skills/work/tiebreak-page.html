@@ -1,0 +1,99 @@
+<!-- Tiebreak page skeleton for the work skill (section 2, Tiebreak page). Copy it, fill every
+     {{...}}, delete this comment. Keep the CSS and script as is. The page holds no conversation
+     data: the session seeds the `calls` collection after publishing and reads `picks` back.
+     Words: plain, no IDs, no build terms. -->
+<title>{{Title, 2 to 4 words}}</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@600;800&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column of conversation cards, a sticky progress bar; each question a row of pill choices. */
+:root{
+  --bg:#f6f7f9; --panel:#ffffff; --ink:#18202b; --muted:#5b6676; --line:#dde2ea;
+  --led:#1f6feb; --led-soft:#e3ecfd; --ok:#1a7f4b; --ok-soft:#e2f4ea; --warn:#9a6700; --warn-soft:#fbf0d4;
+  --display:"Schibsted Grotesk",system-ui,sans-serif; --body:"Source Sans 3",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f141b; --panel:#161d27; --ink:#e6ebf2; --muted:#9aa6b6; --line:#2a3443;
+  --led:#5b9dff; --led-soft:#1a2b47; --ok:#4cc38a; --ok-soft:#163327; --warn:#e2b340; --warn-soft:#3a2f14; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f141b; --panel:#161d27; --ink:#e6ebf2; --muted:#9aa6b6; --line:#2a3443;
+  --led:#5b9dff; --led-soft:#1a2b47; --ok:#4cc38a; --ok-soft:#163327; --warn:#e2b340; --warn-soft:#3a2f14; color-scheme:dark}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.5}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+.wrap{max-width:820px;margin:0 auto;padding-block:28px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:18px}
+h1{font-family:var(--display);font-weight:800;font-size:1.8rem;margin:0;text-wrap:balance}
+p{margin:0;max-width:65ch}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.muted{color:var(--muted)}
+.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding-block:10px;display:flex;gap:14px;align-items:center;border-bottom:1px solid var(--line)}
+.track{flex:1;height:8px;border-radius:4px;background:var(--line);overflow:hidden}.track i{display:block;height:100%;background:var(--ok);width:0}
+.count{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:.9rem}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;display:grid;gap:12px;min-width:0}
+.card.done{border-color:var(--ok)}
+.head{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:baseline;justify-content:space-between}
+.head a{color:var(--led);font-weight:600}
+.reads{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:620px){.reads{grid-template-columns:1fr}}
+.read{background:var(--bg);border-radius:8px;padding:10px 12px;font-size:.95rem;min-width:0}
+.read b{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;display:block;margin-bottom:2px}
+.q{display:grid;gap:6px}
+.q .lab{font-weight:600;font-size:.95rem}
+.q .lab small{font-weight:400;color:var(--muted)}
+.opts{display:flex;flex-wrap:wrap;gap:6px}
+.opts button{font:inherit;font-size:.92rem;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;padding:5px 12px;cursor:pointer;display:inline-flex;gap:6px;align-items:center}
+.opts button:focus-visible{outline:2px solid var(--led);outline-offset:2px}
+.opts button[aria-pressed="true"]{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.tag{font-family:var(--mono);font-size:.65rem;padding:1px 5px;border-radius:4px;background:var(--warn-soft);color:var(--warn)}
+.empty,.note{background:var(--panel);border:1px dashed var(--line);border-radius:10px;padding:18px}
+</style>
+
+<div class="wrap">
+  <header style="display:grid;gap:8px">
+    <div class="eyebrow">Ada Evidence Loop · {{W#}} · {{channel}} · reader tiebreak</div>
+    <h1>{{Title, 2 to 4 words}}</h1>
+    <p class="muted">Two readers disagreed on these {{calls|chats|emails}} about {{the topic, plain words}}. Open each one in Ada, then pick the answer for each question. Your pick settles the count. Tags show what each reader said: <span class="tag">H</span> the first reader, <span class="tag">S</span> the second.</p>
+  </header>
+  <div class="bar"><div class="track"><i id="fill"></i></div><span class="count" id="count">0 of 0 settled</span></div>
+  <div id="status" class="note muted" hidden></div>
+  <div id="list"><div class="empty muted">The conversations to settle load here from the page's store. If nothing appears, the store is not reachable in this view.</div></div>
+</div>
+
+<script>
+// One entry per deciding field: field is the readers' answer key, each option's value is a value the
+// readers wrote (so the H and S tags land on it). Example: {field:"ended",label:"Did the problem end?",
+// hint:"(in the customer's own words)",opts:[["yes","Yes"],["no","No"],["unclear","Unclear"]]}
+const QS={{QUESTIONS}};
+let calls=[],picks={},db=null;
+const $=s=>document.querySelector(s);
+function esc(t){return (t==null?"":String(t)).replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[ch])}
+function settled(c){const p=picks[c.id]||{};return QS.every(q=>p[q.field]!==undefined)}
+function render(){
+  const list=$("#list");
+  if(!calls.length){list.innerHTML='<div class="empty muted">No conversations to settle yet.</div>';progress();return}
+  list.innerHTML=calls.map(c=>{
+    const p=picks[c.id]||{},h=c.h||{},s=c.s||{};
+    const qs=QS.map(q=>`<div class="q"><div class="lab">${esc(q.label)} <small>${esc(q.hint||"")}</small></div><div class="opts">${q.opts.map(([v,l])=>{
+      const tags=(h[q.field]===v?'<span class="tag">H</span>':'')+(s[q.field]===v?'<span class="tag">S</span>':'');
+      return `<button type="button" data-id="${esc(c.id)}" data-k="${esc(q.field)}" data-v="${esc(JSON.stringify(v))}" aria-pressed="${p[q.field]===v}">${esc(l)}${tags}</button>`}).join("")}</div></div>`).join("");
+    return `<article class="card${settled(c)?" done":""}">
+      <div class="head"><span class="eyebrow">Conversation ${esc(c.n)} · ${esc(c.date)}</span><a href="${esc(c.link)}" target="_blank" rel="noopener">Open in Ada</a></div>
+      <div class="reads"><div class="read"><b>First reader</b>${esc(h.summary)}</div><div class="read"><b>Second reader</b>${esc(s.summary)}</div></div>
+      ${qs}</article>`}).join("");
+  progress();
+}
+function progress(){const n=calls.filter(settled).length;$("#count").textContent=`${n} of ${calls.length} settled`;$("#fill").style.width=calls.length?(100*n/calls.length)+"%":"0"}
+document.addEventListener("click",async e=>{
+  const b=e.target.closest("button[data-id]");if(!b)return;
+  const id=b.dataset.id,k=b.dataset.k,v=JSON.parse(b.dataset.v);
+  const next=Object.assign({},picks[id]||{},{[k]:v});picks[id]=next;render();
+  if(!db){status("Picks are not being saved: the store is not reachable in this view.");return}
+  try{await db.collection("picks").doc(id).set(next)}catch(err){status("A pick did not save ("+(err&&err.code||"error")+"). Pick it again.")}
+});
+function status(t){const s=$("#status");s.textContent=t;s.hidden=false}
+(async()=>{
+  db=await (window.claude?.use?.("db")??null);
+  if(!db){status("The store is not reachable in this view, so the conversations cannot load. Open the page on claude.ai while signed in.");return}
+  db.collection("calls").orderBy("n").onSnapshot(s=>{calls=s.docs.map(d=>d.data());render()},e=>status("Conversations failed to load ("+e.code+")."));
+  db.collection("picks").onSnapshot(s=>{picks={};s.docs.forEach(d=>picks[d.id]=d.data());render()},()=>{});
+})();
+</script>
