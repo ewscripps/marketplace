@@ -3,7 +3,7 @@ name: evidence-loop
 description: Weekly evidence loop for the Tablo Ada instance. Shows where Ada got worse this week from the whole conversation population, turns real failed conversations into Ada test cases, and checks a staged change against them before a person promotes it. Read-heavy; every write to Ada sits behind an explicit approval. Use for the Friday review, or mid-week with a cluster, playbook or topic to chase one thing.
 user-invocable: true
 argument-hint: '[--window START END | --cluster KEY | --playbook ID | --topic ID] [--no-pull]'
-allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_read.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/fix_check.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/handoff_cards.py *), Bash(osascript -l JavaScript ~/.claude/skills/omnifocus/scripts/of_add.js *), Bash(python3 ~/.claude/skills/omnifocus/scripts/of_read.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(ls *), Bash(mkdir -p *), Read, Grep, Glob, Edit(/Users/181085/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md), AskUserQuestion, Skill
+allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_read.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/fix_check.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/handoff_cards.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/outcome_vars.py *), Bash(osascript -l JavaScript ~/.claude/skills/omnifocus/scripts/of_add.js *), Bash(python3 ~/.claude/skills/omnifocus/scripts/of_read.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(ls *), Bash(mkdir -p *), Read, Grep, Glob, Edit(/Users/181085/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md), AskUserQuestion, Skill
 ---
 
 # Ada Evidence Loop (Tablo)
@@ -142,6 +142,20 @@ Say the three triage lines; the first is this week's standing line, said once. T
 on This week. Keep
 the artifact path; step 6a needs it.
 
+**Outcome endings (W166).** Playbooks carrying outcome variables record how each conversation ended.
+When the variable ids file is on disk, triage also writes two sections to This week: the
+instrumented playbooks (each variable, its promote time, whether it is live) and this week's ending
+mix per playbook and channel, every value counted with Ada's resolved, not resolved and handed-off
+beside it, unset as its own value, and the coverage (the share of the playbook's conversations
+with the variable set) beside every count. A variable counts only from its promote time on. Then
+run the weekly check, which samples up to 10 conversations per instrumented playbook, has Haiku say
+whether the recorded ending matches the transcript, and prints one line per playbook; over 10%
+mismatch is a broken-check finding to file:
+
+```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/outcome_vars.py check --artifact ~/.ada-evidence/tablo/conversations_<MON>_<SUN>.jsonl --run-date <TODAY>
+```
+
 ## Step 2: Check last week's changes
 
 Runs right after the pull, before anything this week is ranked or approved. Four parts, in order.
@@ -204,7 +218,10 @@ The read is tiered: Haiku reads every conversation twice, then Sonnet reads once
 conversation the Haiku readings left unsettled on a deciding check (reached, new behaviour, ended
 well) and settles that check when its quote is in the conversation (`--second-model`, default
 Sonnet; `none` skips it). What it lists after that are the conversations the verdict turns on.
-Say its three lines. Then read in full every conversation it lists
+Say its lines. On an instrumented playbook (W166) a fourth line, after the headline, gives the top
+three endings from the week's export, the change against baseline on a rollout, each with its
+coverage, and the row carries the full mix; a deploy note that names a reach variable and values
+gets the reach counted from them. The transcript read stays the verdict. Then read in full every conversation it lists
 (`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_read.py show <CONVERSATION-ID>`) and
 decide each flagged answer yourself before the recommendation is repeated: this session is the
 Opus tier. Ada's grade is shown beside the read and never decides.
@@ -225,7 +242,7 @@ python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/handoff_cards.py link --read
 It prints the read in one line, then the Ada conversations list pre-filtered to the change's
 playbooks (its coaching rules, tools or articles when it touched no playbook), the channel and the
 read's days, plus a rollout's own change set, and every conversation the readers flagged, one link
-each. Give David the list link and the flagged links as printed, then one `AskUserQuestion`: the
+each. With `--variable <name> --value <word>` the list opens on one recorded ending (W166). Give David the list link and the flagged links as printed, then one `AskUserQuestion`: the
 headline and what your full reads showed, and three options, worked, did not work, wait a week,
 your recommendation first. Worked and did not work close the decision with the command below
 (`--verdict worked` or `did-not-work`) and his words. Wait a week closes nothing: the decision stays
@@ -341,7 +358,10 @@ No Ada call and no model call; nothing is spent here. It reads step 2's
 first, then the largest loss) and is read like any target; it is decided as its change at step
 2 when it is a rollout or live 7 days or more (a younger promoted change waits for its day-7 read),
 never at step 6b. The first 3 on the shortlist (`read_at_4c: true`) are this week's reads;
-the rest are there to swap in. Say the three lines. The shortlist, the held items and every playbook and topic over the floor are on This week, sorted by lost a week. The question names each target in one line: name, conversations, resolved now against resolved before, and for voice the transcription minutes; the two options are read it (Recommended) and skip it. A coaching or failure-reason target cannot be approved at step 6b; say so in its line.
+the rest are there to swap in. Say the three lines. On an instrumented playbook (W166) the output also carries ending rows, one per
+playbook, channel and hand-off or declined ending, with this week's count, the coverage and the
+12-week figure once 12 weeks are on file; they are on This week under endings and the first line
+says how many there are. They are not on the shortlist. The shortlist, the held items and every playbook and topic over the floor are on This week, sorted by lost a week. The question names each target in one line: name, conversations, resolved now against resolved before, and for voice the transcription minutes; the two options are read it (Recommended) and skip it. A coaching or failure-reason target cannot be approved at step 6b; say so in its line.
 
 One `AskUserQuestion` call holds all of them, one question per target: the target in a line, and
 two options, read this target (Recommended) and skip it. A voice target says how many calls will
