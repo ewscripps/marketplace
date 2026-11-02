@@ -129,9 +129,22 @@ can check later is a change nobody can learn from.
 
 ## Step 4: Draft
 
-Before the build spec, search existing coaching for the target playbook's intent with
-`search_coaching` (Ada improvement guide, step 4). List any rule that routes to or speaks inside
-this playbook, and resolve the overlap in the spec.
+Before the build spec, run the coaching routing check (W94). Search existing coaching for the
+target playbook's intent with `search_coaching`, two or three times in different words, limit 20.
+For every rule returned, put its volume and resolution beside it: this week's export rows first
+(`~/.ada-evidence/tablo/stage-results/targets_<run date>.json`, `by_group.coaching` and
+`coaching_not_readable_this_week`: Ada's conversations a week and resolved share, plus this week's
+pull count), else `reference/coaching_ids.md` (Convos/wk, ARR). Then list, each rule with its
+figures:
+
+1. The playbook-type rules whose `chosen_id` is this playbook: what routes in.
+2. Rules that send the same kind of conversation somewhere else (knowledge search, a reply,
+   another playbook) when this playbook should get them: propose a coaching route for them.
+3. Rules that route in conversations the playbook cannot resolve (an intent outside its scope,
+   or a resolved share far under the playbook's own): flag them.
+
+The list goes in the spec and on the decision page; a coaching edit itself goes through
+`weekly-playbook-analysis` Step 9, never from here. Resolve any overlap in the spec.
 
 Write sections, steps and the exact text of every message, instruction, `exact_words` and
 extraction instruction. Section B of the rules file is the checklist; the rules that catch the most

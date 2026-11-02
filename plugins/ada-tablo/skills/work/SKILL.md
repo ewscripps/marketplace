@@ -53,6 +53,16 @@ IDs (changeset, playbook, step) go in a third line starting `ref:` only when Dav
   - `Skill: config-health` to check a playbook's wiring and behaviour.
   - `Skill: evidence-loop` with `--cluster`, `--playbook` or `--topic` to read one cluster or to
     test a staged change against real failures (its step 8).
+- **Coaching routing check (W94), before any playbook change.** Run `search_coaching` on the
+  playbook's intent two or three times in different words, limit 20, and put each rule's volume
+  and resolution beside it from this week's export rows
+  (`~/.ada-evidence/tablo/stage-results/targets_<run date>.json`, `by_group.coaching` and
+  `coaching_not_readable_this_week`), else `reference/coaching_ids.md`. Say three things: the
+  playbook-type rules that route into this playbook; rules sending the same kind of conversation
+  elsewhere that this playbook should get, with a proposed coaching route; rules routing in
+  conversations the playbook cannot resolve. The text is in `playbook-authoring` Step 4; the
+  result goes on the decision page, and a coaching edit goes through `weekly-playbook-analysis`
+  Step 9.
 - **Sub-agents** are for a build, a config sweep, or bulk transcript reading. Ask for a
   three-part report: done or not done in one line; the verification command and its real output;
   findings as numbered one-liners with verbatim text beside every ID. Report it to David in two
