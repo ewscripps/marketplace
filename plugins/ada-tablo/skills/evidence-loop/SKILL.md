@@ -358,7 +358,10 @@ No Ada call and no model call; nothing is spent here. It reads step 2's
 first, then the largest loss) and is read like any target; it is decided as its change at step
 2 when it is a rollout or live 7 days or more (a younger promoted change waits for its day-7 read),
 never at step 6b. The first 3 on the shortlist (`read_at_4c: true`) are this week's reads;
-the rest are there to swap in. Say the three lines. On an instrumented playbook (W166) the output also carries ending rows, one per
+the rest are there to swap in. A row in state `held_again` (held two runs in a row by the same
+open decision, W152) takes a slot after the reads with its own question: read it, release the
+hold (close or re-decide that decision at step 2), or hold one more week with a reason, which
+goes on the decision's TODO line. Say the three lines. On an instrumented playbook (W166) the output also carries ending rows, one per
 playbook, channel and hand-off or declined ending, with this week's count, the coverage and the
 12-week figure once 12 weeks are on file; they are on This week under endings and the first line
 says how many there are. They are not on the shortlist. The shortlist, the held items and every playbook and topic over the floor are on This week, sorted by lost a week. The question names each target in one line: name, conversations, resolved now against resolved before, and for voice the transcription minutes; the two options are read it (Recommended) and skip it. A coaching or failure-reason target cannot be approved at step 6b; say so in its line.
