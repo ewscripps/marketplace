@@ -1,8 +1,8 @@
 ---
 name: preflight
-description: Pre-flight check for ada-tablo skills — clones workspace repo, pulls latest, inspects history, and runs the weekly Ada platform contract check.
+description: Pre-flight check for ada-tablo skills — clones workspace repo, pulls latest, inspects history, runs the weekly Ada platform contract check, and reads Ada's new release notes once a day.
 user-invocable: false
-allowed-tools: Bash(git *), Bash(ls *), Bash(cp *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), AskUserQuestion, Read, Grep
+allowed-tools: Bash(git *), Bash(ls *), Bash(cp *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/release_notes.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/adacli_watch.py *), AskUserQuestion, Read, Grep
 ---
 
 # Ada-Tablo Pre-Flight
@@ -160,8 +160,49 @@ Every calling skill except commit-results reads Ada through the MCP server. If n
 is available in this session, say so in one line: the calling skill will stop at its first
 Ada call. The server reads `ADA_API_TOKEN` (see Step 2).
 
+## Step 7: Ada Release Notes (daily)
+
+Ada ships changes to the platform, the MCP server and adacli several times a week, and some
+change what our playbooks, tools or scripts rely on. This step reads what shipped since the
+last check, once a day.
+
+```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/release_notes.py check
+```
+
+The script reads Ada's public feed (`https://docs.ada.cx/release-notes.rss`), prints each entry
+newer than the last one seen with a `touches:` line naming the parts of our setup it mentions,
+and records them as seen. A second run the same day prints one line and reads nothing.
+
+**How to handle the result:**
+
+| Result | Action |
+|---|---|
+| Already checked today, or 0 new | Say so in one line and continue. |
+| New entries | Read each one. List only those that could change how the Tablo instance or our tooling behaves, one line each: the date, the title, and what in our setup it touches (a playbook, coaching, changesets, test cases, the MCP tools we call, adacli, the conversation export, Voice, Messaging, Zendesk handoff). Say how many others were skipped as unrelated (UI, design system, other channels). |
+| Exit 2 (feed unreadable) | Say so in one line and continue. Nothing is recorded, so the next preflight tries again. |
+
+**Warn, do not block.** A release note is a finding for the user, never a reason to stop the
+calling skill or to change anything. Do not act on one, investigate one, or propose a work item
+unless the user asks. To look back further, `release_notes.py show --days N` prints the last
+N days and records nothing.
+
+**adacli against MCP (daily, same step).** Ada ships adacli features ahead of the MCP server
+(W159, 2026-11-05), so the day's read also compares the installed adacli's command tree with the
+MCP server's tool list:
+
+```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/adacli_watch.py check
+```
+
+It prints the adacli version, the commands and MCP tools added or removed since the last check,
+and the commands no MCP tool covers, with the new ones marked `NEW`. Say the `NEW` lines and any
+removed MCP tool, one line each, and the count of the rest. Already checked today, or exit 2
+(adacli or the MCP server unreadable): one line and continue. It runs no adacli write and never
+runs `adacli upgrade`. `adacli_watch.py show` prints the full picture and records nothing.
+
 ## Notes
 
 - All bash commands are separate calls (no `&&` chaining)
 - The workspace repo path is always `~/repos/ada-tablo-ops`
-- This skill edits no files itself. A fast-forward pull on a clean `main` updates the clone, and the contract check writes its state file
+- This skill edits no files itself. A fast-forward pull on a clean `main` updates the clone, the contract check writes its state file, the release-notes check writes `~/.ada-evidence/tablo/release-notes-state.json`, and the adacli watch writes `~/.ada-evidence/tablo/adacli-watch-state.json`

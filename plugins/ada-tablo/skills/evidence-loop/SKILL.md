@@ -3,7 +3,7 @@ name: evidence-loop
 description: Weekly evidence loop for the Tablo Ada instance. Shows where Ada got worse this week from the whole conversation population, turns real failed conversations into Ada test cases, and checks a staged change against them before a person promotes it. Read-heavy; every write to Ada sits behind an explicit approval. Use for the Friday review, or mid-week with a cluster, playbook or topic to chase one thing.
 user-invocable: true
 argument-hint: '[--window START END | --cluster KEY | --playbook ID | --topic ID] [--no-pull]'
-allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_read.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/fix_check.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/handoff_cards.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/outcome_vars.py *), Bash(osascript -l JavaScript ~/.claude/skills/omnifocus/scripts/of_add.js *), Bash(python3 ~/.claude/skills/omnifocus/scripts/of_read.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(ls *), Bash(mkdir -p *), Read, Grep, Glob, Edit(/Users/181085/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md), AskUserQuestion, Skill
+allowed-tools: Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/early_read.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/pull_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/triage_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/trend_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/targets_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/forensics_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/followthrough_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/finding_dupes.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/judge_evidence.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/decision_page.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/sim_harness.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/fix_check.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/handoff_cards.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/outcome_vars.py *), Bash(osascript -l JavaScript ~/.claude/skills/omnifocus/scripts/of_add.js *), Bash(python3 ~/.claude/skills/omnifocus/scripts/of_read.py *), Bash(python3 ~/repos/ada-tablo-ops/evidence-loop/tests/run_tests.py *), Bash(python3 ~/repos/ada-tablo-ops/scripts/pull_coaching_metrics.py *), Bash(ls *), Bash(mkdir -p *), Read, Grep, Glob, Edit(/Users/181085/Obsidian/Projects/Ada-Evidence-Loop/FINDINGS.md), Write(/Users/181085/.ada-evidence/tablo/stage-results/decision_notes_*.json), AskUserQuestion, Skill
 ---
 
 # Ada Evidence Loop (Tablo)
@@ -148,9 +148,12 @@ instrumented playbooks (each variable, its promote time, whether it is live) and
 mix per playbook and channel, every value counted with Ada's resolved, not resolved and handed-off
 beside it, unset as its own value, and the coverage (the share of the playbook's conversations
 with the variable set) beside every count. A variable counts only from its promote time on. Then
-run the weekly check, which samples up to 10 conversations per instrumented playbook, has Haiku say
-whether the recorded ending matches the transcript, and prints one line per playbook; over 10%
-mismatch is a broken-check finding to file:
+run the weekly check, which samples up to 10 conversations per instrumented playbook and has Haiku
+answer two things per conversation (W174, David 2026-11-05): does the recorded word match the step
+Ada took, and did the conversation really end that way. It prints one line per playbook; over 10%
+step mismatch is a broken-check finding to file. A word that matches the step and not the outcome is
+Ada taking the wrong branch (F832), printed on its own line and read with the playbook, not a broken
+check:
 
 ```bash
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/outcome_vars.py check --artifact ~/.ada-evidence/tablo/conversations_<MON>_<SUN>.jsonl --run-date <TODAY>
@@ -467,9 +470,28 @@ staged at this step.
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py show --judgment <JUDGMENT JSON>
 ```
 
+**Decision page (W180, David 2026-11-09).** `show` builds the step 6b decision page and prints its
+link on its first line; the status page links it on step 6b. Before the first question, write this
+session's reading per finding to `~/.ada-evidence/tablo/stage-results/decision_notes_<RUN DATE>.json`,
+where `<RUN DATE>` is the judgment's `run_date` (the date in the judgment's file name), not today
+(format in `decision_page.py`'s docstring): per finding `item` (the W item an approve creates or
+extends, `new: <2 to 3 word title>` for a new one), `ask` (one plain sentence), `context` (one or two
+sentences from the reads, in conversation counts), `pick` (`approve: <goal option label>`, `defer`
+or `reject`) and `why` (one or two sentences); per item `change` and `since` when the generated ones
+do not read plainly. Then rebuild and open it:
+
+```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/decision_page.py 6b --run-date <RUN DATE> --open
+```
+
+Every 6b question has the page link on its first line and, after it, the goal block. Both the
+question and its option labels use the page's words: the goal as calls ("about 16 of the ~97 calls
+resolved a week, up from 9"), never the gate's bare "+7.3 resolved a week (down to 3.53%)". The page
+is served live, so each recorded decision shows on a reload.
+
 `AskUserQuestion`, one question per finding from both tables, every target read at step 5
-among them, 4 findings a call and several calls when there are more. Each question leads with one
-goal block, from the page's `goal` for that finding: the goal in resolved conversations a week, the
+among them, 4 findings a call and several calls when there are more. After the link, each question
+gives one goal block, from the page's `goal` for that finding: the goal in resolved conversations a week, the
 loss it recovers, and that its verdict is read 7 days after the change goes live. The options are
 the page's two goal options (`goal.options`: the whole loss back and half of it, or the smallest goals one week and four weeks of data can see), each an approve with
 its goal, then reject and defer, the one you recommend first and why. No separate resolved-a-week
