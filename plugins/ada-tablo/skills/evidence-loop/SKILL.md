@@ -29,6 +29,16 @@ stage 10 closes the run. Every stage is built.
 The run stops at the decision and writes no fix (W158, David, 2026-10-27). A person writes it in a
 fresh `work` session between runs, from a stage 7 card; a later run's stage 8 checks it.
 
+**One run a week, on Friday (W189, David, 2026-11-12).** The full run is Friday only, on the Monday
+to Sunday week that ended the Sunday before. There is no Monday run. Any other run is **reads and
+closes only**: steps 1a, 1b, 1c, 2 and 10b. It refreshes the week's numbers, runs the change reads
+that are due, takes David's closes, and ends with "Run complete". No new targets, no target
+transcript reads, no decision page, no hand-off cards, no week plan. Step 1a's `approval_gate.py
+week` says which run this is: reads and closes only when today is not Friday, or when an earlier
+run already recorded decisions for this week. A full run on another day, or on a week already
+judged, happens only when David says so in this session. A targeted run is David naming one thing
+and is unchanged.
+
 **Readers** (W158): Haiku reads every conversation first (twice, in two groupings); Sonnet reads
 again the ones Haiku flagged; Opus, this session, reads in full the conversations a verdict turns
 on. Codex stays for bulk full reads, launched by David. In a `work` session, David can settle the
@@ -86,7 +96,9 @@ carry on. The server stays up until it is stopped; step 1a restarts
 it, and a status call after a stop starts it again. Do not otherwise mention the page.
 
 **Skipping a step needs David's yes.** No step is skipped on your judgment, a targeted run's
-steps and last week's changes (2, due every run) included. `loop_status.py skip <IDs> --reason
+steps and last week's changes (2, due every run) included. The one exception is a reads-and-closes
+run: `loop_status.py start --mode reads` leaves out steps 3b to 10a itself, with no skip question,
+and refuses a `step` or `wait` on any of them. `loop_status.py skip <IDs> --reason
 "<why>"` skips nothing: it returns `approval_required` with `ask_first` and `on_yes`. Run
 `ask_first` (it puts `Skip <IDs>? <reason>` on the page), ask David with `AskUserQuestion`, and run `on_yes`
 verbatim only on his yes in the moment, with his words in place of `<David's words>`. If he says
@@ -97,7 +109,17 @@ run, ask David with `AskUserQuestion` whether to run or skip the steps it names,
 ## Step 1a: Preflight
 
 ```bash
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/approval_gate.py week
+```
+
+Say its two lines: the week this run lands on with what an earlier run decided for it, and
+whether this is the week's full run or reads and closes only. Start the run it names, the second
+form for reads and closes only. When David says in this session to do a full run anyway, use the
+first form and say so in one line.
+
+```bash
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py start
+python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/loop_status.py start --mode reads
 ```
 
 It opens the status page in the browser. A targeted run declares its plan here, every step it
@@ -107,10 +129,9 @@ before step 1b. A step outside the plan runs, or gets its own yes. Then invoke
 `Skill: preflight`. It pulls the repo, checks credentials, and runs the weekly platform
 contract check unless it passed in the last 7 days (a failed check reruns every time). If the contract check FAILS, show the failing group's WHAT BROKE /
 INVALIDATES / DO lines and ask with `AskUserQuestion` whether to continue. Then read
-`~/Obsidian/Projects/Ada-Evidence-Loop/TODO.md` and say in one line how many work items are open,
-whether a P0 is open, which one is Now, and how many lines are under `## Loop run reads`. Read
-those lines now: step 2 does the reads, and a line that changes how a step runs (for example
-F238's, which sends step 2's close to `--no-close`) applies at that step.
+`~/Obsidian/Projects/Ada-Evidence-Loop/TODO.md` and say in one line how many work items are under
+`## Working`, whether a P0 is open, and how many lines are under `## Live, awaiting read`. That
+section is generated (W192): step 2 does the reads from READS DUE, and nothing there is edited by hand.
 
 ## Step 1b: Where are we
 
@@ -128,8 +149,8 @@ closes.
 Targeted mode (`--cluster`, `--playbook`, `--topic`): skip the pull if an artifact covers the
 window, run `run_tests.py --playbook/--topic`, run step 2, and go to step 4 for that one target.
 
-Weekly mode: run the pull for the most recent complete Monday to Sunday week every time, before
-triage. When its artifact already exists under `~/.ada-evidence/tablo/`, the pull does not
+Weekly mode, the full run and a reads-and-closes run alike: run the pull for the most recent
+complete Monday to Sunday week (the one `approval_gate.py week` named) every time, before triage. When its artifact already exists under `~/.ada-evidence/tablo/`, the pull does not
 fetch the week again; it re-reads the conversations Ada had not classified yet and replaces
 each one that is classified now (F311). Say how many it re-read and how many are now classified.
 
@@ -169,8 +190,7 @@ Runs right after the pull, before anything this week is ranked or approved. Four
 python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/brief_state.py
 ```
 
-If a Loop run reads line says to preview only, run it with `--no-close` instead and say why in one
-line. It prints READS DUE: every open decision whose change has been live 7 days or more with no
+It prints READS DUE: every open decision whose change has been live 7 days or more with no
 verdict read on file, then every live change that long that no decision names, one line per change
 and channel with the command to run. What each line without a read command means:
 
@@ -308,14 +328,20 @@ last graded day. A cell with under 3 graded days after the change, or under 15 c
 either side, is shown with its numbers and labelled too early. A cell with "the after window also holds" names the other
 changes on the same entity: say them. The cells are a chart beside the reads above and close nothing.
 
-**Loop run reads.** Every line under `## Loop run reads` in TODO is due on every run, whatever the
-day. A line whose date has passed or whose item is closed: say so in one line and skip it. Every
-other line: read what it names from this week's pull and triage artifact, the cells above, or
-read-only from Ada, and report it in one or two sentences per item read, with numbers and
-denominators against the baseline the line gives. Say "not measurable this run" and why when a read
-cannot be done; never skip one silently. A read is a report. It is filed as a finding at step 10b only
-when it shows new measured harm or a new broken check. Never edit TODO; a line that needs changing
-is asked of David with `AskUserQuestion` at step 10b. Say the standing line step 1b printed.
+**Live, awaiting read (W192, replaces the hand-written Loop run reads lines).** The briefing
+generates TODO's `## Live, awaiting read` section: one line per live change with no verdict on
+record, with the day its day-7 read is due. Right after the briefing, on the Friday run and a
+reads-and-closes run alike, write it into TODO:
+
+```bash
+python3 ~/Obsidian/Projects/Ada-Evidence-Loop/workspace/doc_hygiene.py --live --write
+```
+
+The reads to run this session are READS DUE, above; a Live line with a later date is not due yet.
+Say "not measurable this run" and why when a due read cannot be done; never skip one silently. A
+read is a report. It is filed as a finding at step 10b only when it shows new measured harm or a
+new broken check. Nothing else in TODO is edited here; a line that needs changing is asked of David
+with `AskUserQuestion` at step 10b. Say the standing line step 1b printed.
 
 **Ask the open rollout decisions, before any new approval.** For every active rollout with an
 open decision, and for every `regressing` line, ask David now with one `AskUserQuestion` call
@@ -329,6 +355,8 @@ row, so `registry.py ready` stops holding that channel, one call per entity it n
 `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <CHANGESET-ID> <ENTITY-ID> --relation rollout_on --channel <CHANNEL> --remove --by david`. While a rollout on a channel is `regressing` and David has not decided it,
 no new prediction goes on that channel: `approval_gate.py decide` refuses one there and asks for
 `--rollout-decided "<David's words>"`.
+
+A reads-and-closes run goes from here to step 10b.
 
 ## Step 3b: What is coaching doing
 
@@ -489,7 +517,12 @@ question and its option labels use the page's words: the goal as calls ("about 1
 resolved a week, up from 9"), never the gate's bare "+7.3 resolved a week (down to 3.53%)". The page
 is served live, so each recorded decision shows on a reload.
 
-`AskUserQuestion`, one question per finding from both tables, every target read at step 5
+A week is judged once (W189): `show` leaves out every finding an earlier run already decided
+for this week and says how many in one line; say that line and ask none of them. `decide` refuses
+a second decision on a finding approved or rejected for this week on any run date. A finding
+deferred earlier in the week is decided again only when David names it.
+
+`AskUserQuestion`, one question per finding `show` lists from both tables, every target read at step 5
 among them, 4 findings a call and several calls when there are more. After the link, each question
 gives one goal block, from the page's `goal` for that finding: the goal in resolved conversations a week, the
 loss it recovers, and that its verdict is read 7 days after the change goes live. The options are
@@ -646,7 +679,11 @@ first. When the work item has a decision page (`registry.py show <W#>` lists a `
 - **Hold.**
 The note is written on his yes, then the hand-off to `weekly-playbook-analysis` Step 9 items 7
 and 8 for the call itself. The ledger row is registered at the `work` close with the prediction
-from this question (F267).
+from this question (F267). When the change has no honest number goal (W191, David, 2026-11-12: a
+goal inside the playbook's own week-to-week range is refused), the same question asks David which
+of two instead of a prediction: no number goal, the day-7 transcript read is the verdict; or no
+verdict expected, with his one-line reason, the playbook's weekly resolved count watched for a
+drop over four Friday runs. The `work` close records his choice with `ledger.py no-goal`.
 
 ## Step 10a: Audit the bench (occasional)
 
@@ -693,12 +730,14 @@ David with `AskUserQuestion`: `loop_status.py skip 10a --reason "<why>"`, its `a
    lines, propose closes (only on evidence in the files: a fix in HISTORY, a later finding,
    falsified, or out of scope by a standing rule), merges (oldest ID survives, the rest move to
    closed with the status `(merged: F##, YYYY-MM-DD)`), From lists corrected to the surviving ID,
-   and the W item each new open finding belongs to, keeping `## Open` at 10 or fewer with the rest
-   in `## Queued`. Pairs under NOT ASKED were over the call cap: give their count, they come back
+   and the W item each new open finding belongs to (an owned finding moves into that item's note,
+   `notes/items/W#.md`), keeping `## Working` at 5 or fewer with the rest in `## Queued` and
+   FINDINGS at 40 or fewer open. Pairs under NOT ASKED were over the call cap: give their count, they come back
    in the monthly sweep. Nothing is applied yet. Ask David with `AskUserQuestion` whether to apply
    it (the counts in the question: closes, merges, new and extended W items), apply on his yes,
-   then run `workspace/doc_hygiene.py` without `--fix` (F451) and fix what it flags.
-3. Record how the run ends, as its own calls. (A) Every change this run staged, gated GO or
+   then run `workspace/doc_hygiene.py` and fix what it flags (it edits nothing itself).
+3. Record how the run ends, as its own calls; a reads-and-closes run leaves this item out, its
+   `done` needs neither list. (A) Every change this run staged, gated GO or
    promoted, one call each:
    `loop_status.py shipped <CHANGESET-ID> --title "<2 to 3 words>" --staged --gated-go --promoted`
    (the flags that hold). (B) Always record the week plan, shipped or not, of at most 5 W items,
@@ -713,7 +752,8 @@ David with `AskUserQuestion`: `loop_status.py skip 10a --reason "<why>"`, its `a
 4. Invoke `Skill: commit-results` with args `evidence`; `reference/history/registry.jsonl` goes
    with it.
 5. Run `loop_status.py done "Run complete. N decisions recorded, M findings added, nothing
-   pending."` with the real counts, and `--tokens N` when the session's token count is known. It
+   pending."` with the real counts (a reads-and-closes run: "Run complete. N reads closed, M
+   findings added, nothing pending."), and `--tokens N` when the session's token count is known. It
    refuses while any step has neither run nor a skip David approved; then stop and ask him with
    `AskUserQuestion` about the steps it names, and run `done` again after. It also refuses while
    the run has neither a shipped list nor a complete week plan; its JSON names what is missing:

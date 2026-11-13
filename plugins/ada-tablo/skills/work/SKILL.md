@@ -30,8 +30,11 @@ David named.
 If the line says BLOCKED, say what it is blocked on in one line and stop, unless David says the
 blocker is cleared.
 
-Write the item under `## Now` in OngoingWork: the ID, its title, its priority, the deliverable,
-the done-when, today's date. Record the open in the registry, the title as the TODO line carries it:
+The item's line sits under `## Working` in TODO while a session works it (W192, David, 2026-11-12:
+at most 5 there). When it is under `## Queued`, move the line up to `## Working`; when Working
+already holds 5, say so in one line and ask David which one goes back to Queued. An item under
+`## Waiting on David` waits on him: say what it waits on and stop, unless he says it is cleared.
+There is no Now entry in OngoingWork any more. Record the open in the registry, the title as the TODO line carries it:
 `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py item <W#> --title "<Title>" --priority <P#> --status open --by david`.
 Say an ID with its title, "W47 (Password Reset Fix)", every time. Then say two lines and nothing
 else:
@@ -168,8 +171,8 @@ IDs (changeset, playbook, step) go in a third line starting `ref:` only when Dav
      the HISTORY line at close.
 - **The ledger is written only through `ledger.py`.** The decision ledger, verifications and
   attribution files under `reference/history/` and `~/.ada-evidence/` are never edited by hand.
-  This skill writes to them in one place, close step 1 below, with `ledger.py register` or
-  `ledger.py link`, for a changeset promoted while the session is open. Every changeset ID this
+  This skill writes to them in one place, close step 1 below, with `ledger.py register`,
+  `ledger.py link` or `ledger.py no-goal`, for a changeset promoted while the session is open. Every changeset ID this
   session stages or promotes still goes on the HISTORY line at close; one staged but not
   promoted is left for the Friday run's step 2 ("changes nobody claimed").
 
@@ -194,11 +197,17 @@ as its own call and read what it lists: open and closed findings that share an e
 it, add the evidence to that line (an open one) or name it in the new line (a closed one) rather
 than filing the same thing under a new number.
 
-The ID is the next one, one past the highest in FINDINGS or `notes/FINDINGS-closed.md`. A P0 or P1
-line goes at the bottom of the P0 and P1 section of FINDINGS, a P2 or P3 line at the bottom of
-Open. A P0 is also said to David in one line. A finding a W item owns carries `(work: W#)` with no
-P tag, since it takes the W's priority. A watch the session opens on a promoted change (what the
-next loop runs should read) goes under `## Loop run reads` in TODO, outside the W line. No
+The bar is at the top of FINDINGS (W192): an `[ada]` finding names 3 or more conversations or a rate
+on a week's population; a `[loop]` finding names a command or test that gives the wrong answer, or
+a wrong number David was shown. FINDINGS holds unowned findings only, at most 40.
+
+The ID is the next one, one past the highest in FINDINGS, `notes/FINDINGS-closed.md` or any note in
+`notes/items/`. A P0 or P1 line goes at the bottom of the P0 and P1 section of FINDINGS, a P2 or P3
+line at the bottom of Open. A P0 is also said to David in one line. A finding a W item owns carries
+`(work: W#)` with no P tag, since it takes the W's priority, and goes in that item's note,
+`~/Obsidian/Projects/Ada-Evidence-Loop/notes/items/W#.md`, under `## Findings` (create the note
+from another one's shape when the item has none). A promoted change needs no hand-written read
+line: TODO's `## Live, awaiting read` section is generated from the briefing. No
 recommendation. Do not investigate it, act on it, or propose acting on it. If David asks about
 one, answer in one line and return to the deliverable.
 
@@ -223,28 +232,52 @@ When the done-when holds and you have read the verification output:
      (evidence-loop step 9: `cluster_key`, `metric`, `direction`, `threshold`),
      or, for a change that went through the old gate, from its gate file
      `~/.ada-evidence/tablo/stage-results/gate_<date>_<runs-batch>.json`, key `prediction`. With
-     neither, ask David for one; never write one yourself. Take the baseline from the latest
+     neither, ask David for one, or for one of the two no-goal choices below; never write one
+     yourself. Take the baseline from the latest
      measured window with `--baseline-window` so `register` checks it against the measured row.
      `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py register <promoted-date>-<slug> --changeset <CHANGESET-ID> --cluster-key <key> --metric <pct|count> --baseline-count <n> --baseline-denominator <d> --baseline-window <window-end> --target <threshold> --direction <down|up> --promoted-at <ISO time> --by david --note "<what changed> (<W#>, gate <file>)"`
+   - **The change has no number goal (W191, David, 2026-11-12).** `register` refuses a goal
+     inside the baseline's own range, and on a small playbook that is almost any honest goal.
+     Never stretch a number to get a row. Record the launch with the choice David made at the
+     launch question; when he made none, ask him with `AskUserQuestion`, the two choices below as
+     the options. The session never chooses. `<decision-id>` is a new one, `<promoted-date>-<slug>`
+     as for `register`.
+     `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/ledger.py no-goal <decision-id> --changeset <CHANGESET-ID> --playbook <PLAYBOOK-ID> --channel <voice|chat|email> --promoted-at <ISO time> --by david --reason "<one line>" [--no-verdict]`
+     - Without `--no-verdict`: no number goal, the day-7 transcript read is the verdict. The
+       change stays on the reads-due list and closes with `ledger.py close --read`.
+     - With `--no-verdict`: no verdict expected, with the one-line reason. The change is never
+       listed as a read due and the work item closes. The Friday run raises it only if that
+       playbook's weekly resolved count falls below each of the four weeks before launch, watched
+       for four Friday runs.
 
-   Re-run `ledger.py open --format json`: every promoted changeset's ID must now appear. If `register` or
-   `link` refuses, or David has no prediction to give, do not close. Write
+     Either row makes the changeset's ID appear in `ledger.py open --format json`.
+
+   Re-run `ledger.py open --format json`: every promoted changeset's ID must now appear. If `register`,
+   `link` or `no-goal` refuses, or David has given neither a prediction nor a no-goal choice, do not close. Write
    `BLOCKED: ledger row for <CHANGESET-ID>: <the refusal, verbatim>` on the TODO line and follow
    the blocked path below. Every changeset promoted or rolled out while the session was open also
    has a deploy note, written before the promote on David's yes (see the changeset-inspect skill,
    Deploy notes). If one is missing, for a promotion David made in the dashboard, draft it, show it
    and write it on his yes: `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/changeset_inspect.py note --changeset <ID> --by david --source <W#> --expect "..." --note "..."`.
-2. Move the TODO line to HISTORY as one line under today's date, with what was verified, any
+2. **A work item closes when its change goes live** (W192): promoted or rolling out, with its
+   deploy note and its ledger row. Its day-7 read is the generated line under `## Live, awaiting
+   read` in TODO, and David closes that read at the Friday run; the next change after a "did not
+   work" verdict is a new work item. Move the TODO line to HISTORY as one line of at most 400
+   characters under today's date (detail goes in the item's note, `notes/items/W#.md`, and the
+   line links it), with what was verified, any
    changeset ID staged or promoted through a handoff skill and the ledger row that claims each
    promoted one, the decision page link if one was published, and whether files under `~/repos` were left uncommitted (they are, unless David
    asked for a commit; `Skill: commit-results` does that).
-3. Clear `## Now` in OngoingWork back to "Nothing in progress." Close the item in the registry,
+3. The findings the item owns stay in its note as `(work: W#)` while a change of its awaits its
+   read; when nothing of it is live, give each a closed status or `(open, P#)` (an open one moves
+   back to FINDINGS), or `doc_hygiene.py` flags it. Close the item in the registry,
    with one link row first for every changeset this session staged or promoted and every decision it
    registered or linked (`stage_playbook.py` and `ledger.py` write their own rows; this one ties
    them to the item):
    `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <CHANGESET-ID> --relation fixes --by david` (`--relation reads` for
    a decision), then `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py item <W#> --status done --by david`. A changeset or decision ID
-   written into an open TODO line also gets its link row, or `doc_hygiene.py` flags it as bare.
+   written into a TODO line also gets its link row, or `doc_hygiene.py` flags it as bare. A TODO
+   line is at most 700 characters: the brief and one "Now:" clause; the rest goes in the item's note.
 4. Say: "<W#> (<title>): done. <what is live or staged, one sentence,
    no IDs>. Deliverable complete, nothing pending." Add "N findings filed." if any. The message
    ends there: no next action, no suggestion, no offer.
@@ -252,5 +285,5 @@ When the done-when holds and you have read the verification output:
 If the deliverable cannot be finished: write the blocker on the TODO line as `BLOCKED: <what>`,
 record it (`python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py item <W#> --status blocked --by david`, and
 `python3 ~/repos/ada-tablo-ops/evidence-loop/scripts/registry.py link <W#> <blocker ID> --relation blocked_by --by david` when the blocker is a W,
-D or F item), clear `## Now`, say "<W#> (<title>): blocked on <what,
+D or F item), say "<W#> (<title>): blocked on <what,
 in plain words>. Nothing pending." and stop.

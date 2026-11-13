@@ -333,6 +333,9 @@ For each approved change record:
    include the verified diff, the config-health verdict, the reach-check result, and the draft
    deploy note (why, source, expected effect, and the rubric the day-7 verdict read checks; see
    `changeset-inspect` Deploy notes). Say which of the two ways in step 8 is being asked for.
+   The question also takes what the change is judged on: a number prediction, or, when no honest
+   number goal exists, David's pick of the day-7 transcript read as the verdict or no verdict
+   expected with a one-line reason (see Record it below).
 
 8. **Only after explicit user confirmation**, write the deploy note, then promote or roll out.
    No note, no promote, and no note, no rollout.
@@ -388,7 +391,10 @@ Handoffs are mocked. Treat every test run as touching real downstream systems.
 
 **Record it.** After a promote, the record is the deploy note and a ledger row, written only
 through `ledger.py register` or `ledger.py link`, with the prediction David gave at the launch
-question. A rollout has its deploy note and no ledger row until it is promoted. After its day-7
+question. A change with no honest number goal (W191, David, 2026-11-12) takes `ledger.py no-goal`
+instead, with the one of two he chose at that question: the day-7 transcript read is the verdict,
+or no verdict expected (`--no-verdict`, his one-line reason, the playbook's weekly resolved count
+watched for a drop over four Friday runs). The command is in the `work` skill, 4. Close. A rollout has its deploy note and no ledger row until it is promoted. After its day-7
 read (evidence-loop step 2), the rollout is kept, stopped or widened on David's yes.
 
 ## Step 10: Offer Next Steps

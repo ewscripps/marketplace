@@ -29,11 +29,18 @@ questions (did it reach the changed step or rule; did Ada do or say the new thin
 customer's problem end, by their own words or a tool's result; if it stopped without a goodbye, was
 the stop benign or a loss), then the deploy note's rubric checks (the `--check` lines when the note
 has none), with its wrong-entrant test first; wrong entrants are counted, set aside on the
-headline ("N wrong entrants set aside") and are never part of the verdict. Code recommends worked when new behaviour is in at least 80% of those
-that reached the change and ended well meets the note's share (`--ended-well-pct`); did not work
-when new behaviour is under 50% of reached or ended well is under the week before launch
-(`--before-pct`); cannot tell otherwise, when fewer than 15 reached it, when no bars are on file, or
-when more than 20% of the conversations picked were not read.
+headline ("N wrong entrants set aside") and are never part of the verdict. The pass marks (W187, David, 2026-11-12): the readers measure "before" themselves on a comparison
+group read the same way, the same window's conversations that did not get the change on a rollout,
+the 7 days before go-live on a 100% launch (`--no-before-read` skips it and uses the note's number;
+a new playbook has no before and is judged on its goal alone). Bars are per channel (the note's
+`--bar <channel>=<goal>`; a change on two channels with one pair of bars has no bar). A result
+within two conversations of a bar is cannot tell: code recommends did not work only when ended well
+is more than two conversations under the before count, and worked only when it is more than two
+over the goal count and the before count, new behaviour is in at least 80% of those that reached
+the change, and each of the change's own checks is met in at least half of the conversations it
+applies to. On chat, an in-app chat that goes quiet right after a step to do, with no return in 24
+hours, counts as ended well on every playbook. Cannot tell otherwise, when fewer than 15 reached
+it, when no bars are on file, or when more than 20% of the conversations picked were not read.
 Ada's grade is shown beside the read and never decides. It prints three lines (the headline "New behaviour in N of M that reached it; the
 problem ended in K; Ada graded R of M resolved", Ada's grade over the same M that reached it, with
 "sampled S of E" when the voice cap applied and the recommendation; the full reads to do, or
